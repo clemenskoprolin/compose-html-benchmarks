@@ -25,6 +25,20 @@ git clone https://github.com/JetBrains/compose-multiplatform.git ../compose-html
 Re-run `./tools/compose-version.sh --prepare` after a relevant change, or pass a
 different checkout to compare another Compose revision.
 
+## Custom dependencies
+
+Attach or replace the custom dependency bundle:
+
+```bash
+./tools/compose-version.sh --dependencies /path/to/dependency-bundle
+```
+
+Passing a bundle root containing `html/` and `m2/`, `runtime/`, or `collection/`
+selects the dependencies automatically.
+
+Use `./tools/compose-version.sh --status` to inspect the selection and
+`./tools/compose-version.sh --clear-dependencies` to return to upstream dependencies.
+
 For a fast correctness smoke test:
 
 ```bash

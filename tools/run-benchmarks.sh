@@ -147,6 +147,9 @@ if [[ -z "$CHECKOUT" ]]; then CHECKOUT="${COMPOSE_HTML_CHECKOUT:-}"; fi
 if [[ -z "$CHECKOUT" ]]; then CHECKOUT="$(read_local_property compose.html.checkout)"; fi
 if [[ -z "$CHECKOUT" ]]; then CHECKOUT="$REPO_ROOT/../compose-html-ssr"; fi
 
+DEPENDENCIES="${COMPOSE_DEPENDENCIES_PATH:-}"
+if [[ -z "$DEPENDENCIES" ]]; then DEPENDENCIES="$(read_local_property compose.dependencies.path)"; fi
+
 if [[ -n "${BENCHMARK_REPETITIONS:-}" && ! "${BENCHMARK_REPETITIONS}" =~ ^[1-9][0-9]*$ ]] || \
    [[ -n "${BENCHMARK_RUNS:-}" && ! "${BENCHMARK_RUNS}" =~ ^[1-9][0-9]*$ ]] || \
    [[ -n "${BENCHMARK_WARMUPS:-}" && ! "${BENCHMARK_WARMUPS}" =~ ^[0-9]+$ ]] || \
@@ -172,11 +175,25 @@ if [[ -z "$REVISION" ]]; then
   REVISION="$(node -p 'JSON.parse(require("fs").readFileSync("tools/compose-source.lock.json")).revision')"
 fi
 export COMPOSE_HTML_CHECKOUT="$CHECKOUT"
+export COMPOSE_DEPENDENCIES_PATH="$DEPENDENCIES"
+SELECTED_COMPOSE_VERSION="$(awk -F= '$1 == "compose.version" { print $2; exit }' "$CHECKOUT/gradle.properties")"
+if [[ -z "$SELECTED_COMPOSE_VERSION" ]]; then
+  echo "Could not determine Compose version from: $CHECKOUT/gradle.properties" >&2
+  exit 1
+fi
 GRADLE_COMPOSE_ARGS=("-Pcompose.html.checkout=$CHECKOUT"
+  "-Pcompose.version=$SELECTED_COMPOSE_VERSION"
   -Pcompose.html.use.included.build=false
   -Pcompose.html.eap.kotlinx-browser-common-subset.version=0.0.1-SNAPSHOT
+  -I "$SCRIPT_DIR/dependencies.init.gradle"
   --no-configuration-cache --console=plain)
-node "$SCRIPT_DIR/verification.mjs" check "--checkout=$CHECKOUT" "--revision=$REVISION"
+
+VERIFICATION_CHECK_ARGS=("--checkout=$CHECKOUT" "--revision=$REVISION")
+if [[ -n "$DEPENDENCIES" ]]; then
+  VERIFICATION_CHECK_ARGS+=("--dependencies=$DEPENDENCIES")
+fi
+node "$SCRIPT_DIR/verification.mjs" check "${VERIFICATION_CHECK_ARGS[@]}"
+
 
 if [[ "$ACTION" == "ssr" ]]; then
   node "$SCRIPT_DIR/run-jvm-report.mjs" "${GRADLE_COMPOSE_ARGS[@]}" -q

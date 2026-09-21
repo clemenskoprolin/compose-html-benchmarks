@@ -1,0 +1,82 @@
+// Gradle init script to route local modified dependencies from build/compose-m2
+// to both Compose HTML builds and the benchmark project builds.
+
+def configureLocalM2 = { repos, File m2Dir ->
+    if (!m2Dir.isDirectory()) return
+    def local = repos.maven {
+        name = 'benchmarkComposeM2Local'
+        url = m2Dir.toURI()
+    }
+
+    // Discover any modules published into the local m2 repository
+    def customVersions = [] as Set
+    m2Dir.eachFileRecurse(groovy.io.FileType.FILES) { File file ->
+        if (file.name.endsWith('.pom') || file.name.endsWith('.module')) {
+            // Path structure: <group-slashed>/<module>/<version>/<file>
+            def versionDir = file.parentFile
+            def moduleDir = versionDir.parentFile
+            def groupDir = moduleDir.parentFile
+            if (groupDir != null && moduleDir != null) {
+                def groupPath = m2Dir.toPath().relativize(groupDir.toPath()).toString()
+                def groupName = groupPath.replace(File.separator, '.')
+                def moduleName = moduleDir.name
+                customVersions << [group: groupName, name: moduleName, version: versionDir.name]
+            }
+        }
+    }
+
+    if (!customVersions.isEmpty()) {
+        try {
+            repos.exclusiveContent {
+                forRepositories(local)
+                filter {
+                    customVersions.each { mod ->
+                        includeVersion(mod.group, mod.name, mod.version)
+                    }
+                }
+            }
+        } catch (Exception e) {
+            // In case exclusiveContent is not supported on this repo container
+        }
+    }
+}
+
+settingsEvaluated { settings ->
+    def m2Prop = System.getProperty("maven.repo.local")
+    def m2Dir = m2Prop ? new File(m2Prop) : null
+    if (!m2Dir || !m2Dir.isDirectory()) {
+        def candidate = new File(settings.settingsDir, "build/compose-m2")
+        if (candidate.isDirectory()) m2Dir = candidate
+        else {
+            candidate = new File(settings.settingsDir.parentFile, "build/compose-m2")
+            if (candidate.isDirectory()) m2Dir = candidate
+        }
+    }
+    if (m2Dir && m2Dir.isDirectory()) {
+        try {
+            if (settings.dependencyResolutionManagement?.repositories) {
+                configureLocalM2(settings.dependencyResolutionManagement.repositories, m2Dir)
+            }
+        } catch (Exception ignored) {}
+    }
+}
+
+allprojects { project ->
+    project.afterEvaluate {
+        def m2Prop = System.getProperty("maven.repo.local")
+        def m2Dir = m2Prop ? new File(m2Prop) : null
+        if (!m2Dir || !m2Dir.isDirectory()) {
+            def candidate = new File(project.rootDir, "build/compose-m2")
+            if (candidate.isDirectory()) m2Dir = candidate
+            else {
+                candidate = new File(project.rootDir.parentFile, "build/compose-m2")
+                if (candidate.isDirectory()) m2Dir = candidate
+            }
+        }
+        if (m2Dir && m2Dir.isDirectory() && !project.repositories.empty) {
+            try {
+                configureLocalM2(project.repositories, m2Dir)
+            } catch (Exception ignored) {}
+        }
+    }
+}
