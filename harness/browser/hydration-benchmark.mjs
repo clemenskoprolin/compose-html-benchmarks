@@ -25,6 +25,11 @@ const warmups = positiveInteger(process.env.BENCHMARK_WARMUPS ?? 1, "BENCHMARK_W
 const serverPort = process.env.BENCHMARK_PORT || "4173";
 const browserChannel = process.env.BENCHMARK_BROWSER_CHANNEL || "chrome";
 const measureMemory = process.env.BENCHMARK_MEMORY !== "false";
+const browserArgs = [
+  "--disable-background-timer-throttling",
+  "--disable-backgrounding-occluded-windows",
+  ...(measureMemory ? ["--enable-blink-features=ForceEagerMeasureMemory"] : []),
+];
 
 // Standard mobile/desktop throttled profile (as used in compose-wasm-optimized-v3)
 const profile = {
@@ -260,7 +265,10 @@ async function measurePageLoad(browser, target, scenario, collectMemory = measur
 }
 
 async function run() {
-  const record = await createRunRecord("browser", { runs, repetitions, warmups, profile, scenarios, targets, measureMemory });
+  const record = await createRunRecord("browser", {
+    runs, repetitions, warmups, profile, scenarios, targets, measureMemory,
+    forceEagerMemory: measureMemory,
+  });
   const resultsDirectory = record.directory;
   record.metadata.browserVersions = [];
   record.metadata.executionOrder = [];
@@ -281,11 +289,11 @@ async function run() {
         browser = await chromium.launch({
           channel: browserChannel,
           headless: true,
-          args: ["--disable-background-timer-throttling", "--disable-backgrounding-occluded-windows"],
+          args: browserArgs,
         });
       } catch {
         console.log("Google Chrome channel not found, using Playwright default browser...");
-        browser = await chromium.launch({ headless: true });
+        browser = await chromium.launch({ headless: true, args: browserArgs });
       }
 
       record.metadata.browserVersions.push(browser.version());
@@ -414,7 +422,7 @@ Automated with Playwright and Chrome DevTools Protocol.
 - **Cache**: Disabled for every page load
 - **Startup protocol**: ${repetitions} independent browser processes, rotating target/scenario order. Per target per process: one first load, ${warmups} discarded loads, then ${runs} subsequent loads; every load uses a fresh context. First-load columns aggregate the per-process first loads; they do not measure browser launch or an isolated cold OS cache.
 - **Reported aggregate**: Median of post-warmup samples${interactionVerification}
-- **Memory**: User-agent-specific application memory plus CDP JS heap, collected after timing and reported first → subsequent
+- **Memory**: User-agent-specific application memory plus CDP JS heap, collected after timing and reported first → subsequent. When enabled, Chrome's eager measurement mode forces the API's garbage collection immediately instead of waiting for its fallback timeout.
 - **Scope**: All nine browser scenarios use matched fixture data, markup and per-scenario production bundles. Both targets serve pre-exported HTML.
 - **DOM verification**: SSR node adoption and workload result assertions run for every sample
 
