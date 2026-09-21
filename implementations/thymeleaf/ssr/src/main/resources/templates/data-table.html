@@ -1,0 +1,35 @@
+<!DOCTYPE html><html lang="en" xmlns:th="http://www.thymeleaf.org"><head><meta charset="UTF-8"><title
+    th:text="${data.title}"></title></head><body><div id="dashboard" data-page="data-table"><header class="page-header"><h1
+    th:text="${data.title}"></h1><p
+    th:text="${data.description}"></p></header><div class="filters-bar" role="search"><input type="search" id="table-search" placeholder="Search rows..." aria-label="Search rows"
+    th:attr="value=${data.searchQuery}"><div class="active-filters"><span
+    th:each="filter : ${data.activeFilters}" class="filter-badge"
+    th:attr="data-filter-key=${filter.key},data-filter-val=${filter.value}"
+    th:text="${filter.key + ': ' + filter.value}"></span></div></div><div class="selection-status" role="status" aria-live="polite"
+    th:text="${data.selectedRowCount + ' items selected'}"></div><table role="grid" aria-label="Data Table"
+    th:attr="aria-rowcount=${data.totalRowCount},aria-colcount=${#lists.size(data.headers)}"><thead><tr><th scope="col"><input type="checkbox" aria-label="Select all rows"></th><th
+    th:each="header : ${data.headers}" scope="col" role="columnheader"
+    th:with="direction=${header.id == data.sortColumnId ? data.sortDirection : 'none'}"
+    th:attr="data-column-id=${header.id},aria-sort=${header.sortable ? direction : null}"
+    th:class="${header.sortable ? 'sortable' + (direction != 'none' ? ' sorted-' + direction : '') : null}"
+    th:text="${header.label}"></th></tr></thead><tbody><tr
+    th:each="row : ${data.rows}"
+    th:attr="data-row-id=${row.id},data-status=${row.status},aria-selected=${row.selected}"
+    th:class="${row.selected ? 'row-selected' : null}"><td><input type="checkbox"
+    th:attr="aria-label=${'Select row ' + row.id}"
+    th:checked="${row.selected}"></td><td
+    th:each="cell : ${row.cells}"
+    th:attr="data-column=${cell.columnId},data-value=${cell.rawValue},aria-describedby=${cell.tooltip != null ? 'tt-' + row.id + '-' + cell.columnId : null}"><span
+    th:if="${cell.isStatus}"
+    th:class="${'status-badge status-' + cell.rawValue}" role="status"
+    th:text="${cell.displayValue}"></span><th:block
+    th:unless="${cell.isStatus}"
+    th:text="${cell.displayValue}"></th:block><span
+    th:if="${cell.tooltip != null}"
+    th:id="${'tt-' + row.id + '-' + cell.columnId}" class="tooltip-text" style="display:none"
+    th:text="${cell.tooltip}"></span></td></tr></tbody></table><nav aria-label="Pagination"><ul class="pagination"><li
+    th:each="page : ${data.pages}"><a
+    th:href="${'?page=' + page.number}"
+    th:attr="data-page=${page.number},aria-label=${'Page ' + page.number},aria-current=${page.isCurrent ? 'page' : null}"
+    th:class="${page.isCurrent ? 'current-page' : null}"
+    th:text="${page.number}"></a></li></ul></nav></div></body></html>

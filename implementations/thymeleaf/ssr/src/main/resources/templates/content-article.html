@@ -1,0 +1,40 @@
+<!DOCTYPE html><html lang="en" xmlns:th="http://www.thymeleaf.org"><head><meta charset="UTF-8"><title
+    th:text="${data.title}"></title><meta name="description"
+    th:content="${data.excerpt}"></head><body><nav aria-label="Breadcrumb"><ol><li
+    th:each="crumb : ${data.breadcrumbs}"><a
+    th:href="${crumb.url}"
+    th:attr="aria-current=${crumb.isCurrent ? 'page' : null}"
+    th:text="${crumb.label}"></a></li></ol></nav><main><article><header><h1
+    th:text="${data.title}"></h1><div class="meta"><span
+    th:text="${'By ' + data.author}"></span><time
+    th:attr="datetime=${data.publishDateIso}"
+    th:text="${data.publishDateFormatted}"></time><span
+    th:text="${data.readingTimeMin + ' min read'}"></span></div><img
+    th:src="${data.heroImage.url}"
+    th:alt="${data.heroImage.alt}"
+    th:attr="width=${data.heroImage.width},height=${data.heroImage.height}" loading="lazy"></header><nav aria-label="Table of contents"><h2>Table of Contents</h2><ul><li
+    th:each="item : ${data.toc}"><a
+    th:href="${'#' + item.targetId}"
+    th:text="${item.title}"></a></li></ul></nav><section
+    th:each="section : ${data.sections}"
+    th:id="${section.id}"><h2
+    th:text="${section.title}"></h2><th:block
+    th:each="block : ${section.blocks}"
+    th:switch="${block.type.name()}"><p
+    th:case="'PARAGRAPH'"
+    th:text="${block.content}"></p><pre
+    th:case="'CODE'"><code
+    th:attr="data-language=${block.language != null ? block.language : 'text'}"
+    th:text="${block.content}"></code></pre><img
+    th:case="'IMAGE'"
+    th:src="${block.url != null ? block.url : ''}"
+    th:alt="${block.content}" loading="lazy"><p
+    th:case="'LINK'"><a
+    th:href="${block.url != null ? block.url : ''}" target="_blank" rel="noreferrer"
+    th:text="${block.content}"></a></p></th:block></section><footer><ul class="tags"><li
+    th:each="tag : ${data.tags}"><a
+    th:href="${'/tags/' + tag}"
+    th:text="${tag}"></a></li></ul></footer></article><aside aria-label="Related articles"><h3>Related Articles</h3><ul><li
+    th:each="article : ${data.relatedArticles}"><a
+    th:href="${article.url}"
+    th:text="${article.title}"></a></li></ul></aside></main><footer><p>© 2024 Benchmarks</p></footer></body></html>

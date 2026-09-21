@@ -1,0 +1,71 @@
+<!DOCTYPE html><html lang="en" xmlns:th="http://www.thymeleaf.org"><head><meta charset="UTF-8"><title
+    th:text="${data.title}"></title></head><body><div id="app-container" role="main"><h1
+    th:text="${data.title}"></h1><form
+    th:action="${data.actionUrl}" method="post"
+    th:attr="aria-label=${data.formLabel}"><fieldset
+    th:each="section : ${data.sections}"
+    th:attr="aria-labelledby=${'legend-' + section.id}"><legend
+    th:id="${'legend-' + section.id}"
+    th:text="${section.title}"></legend><div
+    th:each="field : ${section.fields}" class="form-group"
+    th:id="${'group-' + field.id}"
+    th:with="described=${#strings.trim((field.helpText != null ? 'help-' + field.id + ' ' : '') + (field.errorMessage != null ? 'error-' + field.id : ''))}"><label
+    th:for="${field.id}"
+    th:text="${field.label}"></label><th:block
+    th:switch="${field.type.name()}"><select
+    th:case="'SELECT'"
+    th:id="${field.id}"
+    th:name="${field.name}"
+    th:required="${field.required}"
+    th:disabled="${field.disabled}"
+    th:attr="aria-required=${field.required ? 'true' : null},aria-invalid=${field.errorMessage != null ? 'true' : null},aria-describedby=${described == '' ? null : described}"
+    th:multiple="${field.multiple}"><option
+    th:each="opt : ${field.options}"
+    th:selected="${opt.selected}"
+    th:disabled="${opt.disabled}"
+    th:text="${opt.label}"
+    th:attr="value=${opt.value}"></option></select><textarea
+    th:case="'TEXTAREA'"
+    th:id="${field.id}"
+    th:name="${field.name}"
+    th:required="${field.required}"
+    th:disabled="${field.disabled}"
+    th:attr="aria-required=${field.required ? 'true' : null},aria-invalid=${field.errorMessage != null ? 'true' : null},aria-describedby=${described == '' ? null : described}"
+    th:readonly="${field.readOnly}"
+    th:placeholder="${field.placeholder}"
+    th:attrappend="minlength=${field.minLength},maxlength=${field.maxLength}"
+    th:text="${field.value}"></textarea><div
+    th:case="'RADIO'" role="radiogroup"
+    th:attr="aria-required=${field.required ? 'true' : null},aria-invalid=${field.errorMessage != null ? 'true' : null},aria-describedby=${described == '' ? null : described}"><div
+    th:each="opt, position : ${field.options}"><input type="radio"
+    th:id="${field.id + '-opt-' + position.index}"
+    th:name="${field.name}"
+    th:checked="${opt.selected}"
+    th:disabled="${opt.disabled}"
+    th:attr="value=${opt.value}"><label
+    th:for="${field.id + '-opt-' + position.index}"
+    th:text="${opt.label}"></label></div></div><input
+    th:case="'CHECKBOX'" type="checkbox"
+    th:id="${field.id}"
+    th:name="${field.name}"
+    th:required="${field.required}"
+    th:disabled="${field.disabled}"
+    th:attr="aria-required=${field.required ? 'true' : null},aria-invalid=${field.errorMessage != null ? 'true' : null},aria-describedby=${described == '' ? null : described},value=${field.value}"
+    th:checked="${field.checked}"><input
+    th:case="*"
+    th:type="${#strings.toLowerCase(field.type.name())}"
+    th:id="${field.id}"
+    th:name="${field.name}"
+    th:required="${field.required}"
+    th:disabled="${field.disabled}"
+    th:attr="aria-required=${field.required ? 'true' : null},aria-invalid=${field.errorMessage != null ? 'true' : null},aria-describedby=${described == '' ? null : described},value=${field.value}"
+    th:placeholder="${field.placeholder}"
+    th:readonly="${field.readOnly}"
+    th:attrappend="autocomplete=${field.autoComplete},min=${field.min},max=${field.max},minlength=${field.minLength},maxlength=${field.maxLength},pattern=${field.pattern},step=${field.step}"></th:block><span
+    th:if="${field.helpText != null}"
+    th:id="${'help-' + field.id}" class="help-text"
+    th:text="${field.helpText}"></span><div
+    th:if="${field.errorMessage != null}"
+    th:id="${'error-' + field.id}" class="error-message" aria-live="polite"
+    th:text="${field.errorMessage}"></div></div></fieldset><button type="submit"
+    th:disabled="${data.isSubmitting}">Submit Registration</button></form></div></body></html>

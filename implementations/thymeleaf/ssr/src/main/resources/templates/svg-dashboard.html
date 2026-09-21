@@ -1,0 +1,26 @@
+<!DOCTYPE html><html lang="en" xmlns:th="http://www.thymeleaf.org"><head><meta charset="UTF-8"><title
+    th:text="${data.title}"></title></head><body><div class="dashboard-container"><header class="dashboard-header"><h1
+    th:text="${data.title}"></h1></header><div class="charts-grid"><div class="chart-wrapper"
+    th:attr="aria-label=${'Line chart showing ' + data.lineChart.title}" role="img"><h2
+    th:text="${data.lineChart.title}"></h2><svg viewBox="0 0 800 400" width="100%" height="100%"><line x1="50" y1="350" x2="750" y2="350" stroke="#000" stroke-width="2"/><line x1="50" y1="50" x2="50" y2="350" stroke="#000" stroke-width="2"/><path
+    th:attr="d=${data.lineChart.pathData}" fill="none" stroke="#3b82f6" stroke-width="3"/><circle
+    th:each="point : ${data.lineChart.points}"
+    th:attr="cx=${point.x},cy=${point.y}" r="4" fill="#1d4ed8"/><text
+    th:each="label : ${data.lineChart.xLabels}"
+    th:attr="x=${label.x}" y="370" text-anchor="middle" font-size="12"
+    th:text="${label.text}"></text></svg></div><div class="chart-wrapper"
+    th:attr="aria-label=${'Bar chart showing ' + data.barChart.title}" role="img"><h2
+    th:text="${data.barChart.title}"></h2><svg viewBox="0 0 600 400"><defs><linearGradient id="bar-grad" x1="0%" y1="100%" x2="0%" y2="0%"><stop offset="0%" stop-color="#34d399"/><stop offset="100%" stop-color="#059669"/></linearGradient></defs><th:block
+    th:each="bar : ${data.barChart.bars}"><rect
+    th:attr="x=${bar.x},y=${bar.y},width=${bar.width},height=${bar.height}" fill="url(#bar-grad)"/><text
+    th:attr="x=${bar.x + bar.width / 2},y=${bar.y - 10}" text-anchor="middle" font-size="12"
+    th:text="${#strings.endsWith(bar.value.toString(), '.0') ? #strings.substring(bar.value.toString(), 0, #strings.length(bar.value.toString()) - 2) : bar.value.toString()}"></text></th:block></svg></div><div class="chart-wrapper"
+    th:attr="aria-label=${'Pie chart showing ' + data.pieChart.title}" role="img"><h2
+    th:text="${data.pieChart.title}"></h2><svg viewBox="0 0 400 400"><g transform="translate(200, 200)"><path
+    th:each="slice : ${data.pieChart.slices}"
+    th:attr="d=${slice.pathData},fill=${slice.color}" stroke="#fff" stroke-width="2"/></g></svg></div><div class="chart-wrapper"
+    th:attr="aria-label=${'Gauge showing ' + data.gauge.title}" role="img"><h2
+    th:text="${data.gauge.title}"></h2><svg viewBox="0 0 200 150"><path d="M 20 130 A 80 80 0 0 1 180 130" fill="none" stroke="#e5e7eb" stroke-width="20"/><path
+    th:attr="d=${data.gauge.valuePathData}" fill="none" stroke="#ef4444" stroke-width="20"/><line x1="100" y1="130"
+    th:attr="x2=${data.gauge.needleX},y2=${data.gauge.needleY}" stroke="#374151" stroke-width="4"/><circle cx="100" cy="130" r="8" fill="#374151"/><text x="100" y="145" text-anchor="middle" font-size="14" dominant-baseline="hanging"
+    th:text="${data.gauge.valueLabel}"></text></svg></div></div></div></body></html>

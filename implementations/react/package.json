@@ -1,0 +1,11 @@
+{
+  "name": "compose-html-benchmarks-react",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "serve": "node ../../harness/browser/server.mjs",
+    "benchmark": "node ../../harness/browser/hydration-benchmark.mjs"
+  }
+}

@@ -1,0 +1,23 @@
+{
+  "name": "compose-html-benchmarks",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22" },
+  "scripts": {
+    "build:react": "node implementations/react/scripts/build.mjs",
+    "verify:ssr": "node --stack-size=8192 harness/browser/verify-ssr-workloads.mjs",
+    "benchmark:ssr": "node --stack-size=8192 harness/browser/ssr-comparison.mjs",
+    "benchmark:browser": "node harness/browser/hydration-benchmark.mjs",
+    "test": "node --test harness/browser/*.test.mjs"
+  },
+  "dependencies": {
+    "react": "19.1.1",
+    "react-dom": "19.1.1"
+  },
+  "devDependencies": {
+    "@playwright/test": "1.55.0",
+    "esbuild": "0.25.9",
+    "parse5": "7.3.0"
+  }
+}
