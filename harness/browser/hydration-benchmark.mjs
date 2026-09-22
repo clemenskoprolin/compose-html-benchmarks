@@ -11,9 +11,10 @@ import { createRunRecord } from "./run-record.mjs";
 import { assertEquivalent } from "./html-equivalence.mjs";
 import { readFile } from "node:fs/promises";
 import { interactionInPage } from "./interaction.mjs";
-import { loadBenchmarkEnv } from "./runtime.mjs";
+import { loadBenchmarkEnv, reactRuntimeMode } from "./runtime.mjs";
 
 loadBenchmarkEnv();
+const reactMode = reactRuntimeMode();
 
 const benchmarkDirectory = dirname(fileURLToPath(import.meta.url));
 const rootDirectory = resolve(benchmarkDirectory, "../..");
@@ -43,7 +44,7 @@ const scenarios = (process.env.BENCHMARK_SCENARIOS || "tailwind-catalog,form-app
 const targets = (process.env.BENCHMARK_TARGETS || "react,compose-wasm,compose-js").split(",");
 
 const targetLabels = {
-  "react": "React 19",
+  "react": reactMode === "development" ? "React 19 (dev)" : "React 19",
   "compose-wasm": "Compose (Wasm)",
   "compose-js": "Compose (JS)",
   "compose-wasm-table-unchecked": "Compose (Wasm, table unchecked)",
@@ -267,7 +268,7 @@ async function measurePageLoad(browser, target, scenario, collectMemory = measur
 async function run() {
   const record = await createRunRecord("browser", {
     runs, repetitions, warmups, profile, scenarios, targets, measureMemory,
-    forceEagerMemory: measureMemory,
+    forceEagerMemory: measureMemory, reactMode, reactMinified: true,
   });
   const resultsDirectory = record.directory;
   record.metadata.browserVersions = [];
@@ -423,7 +424,7 @@ Automated with Playwright and Chrome DevTools Protocol.
 - **Startup protocol**: ${repetitions} independent browser processes, rotating target/scenario order. Per target per process: one first load, ${warmups} discarded loads, then ${runs} subsequent loads; every load uses a fresh context. First-load columns aggregate the per-process first loads; they do not measure browser launch or an isolated cold OS cache.
 - **Reported aggregate**: Median of post-warmup samples${interactionVerification}
 - **Memory**: User-agent-specific application memory plus CDP JS heap, collected after timing and reported first → subsequent. When enabled, Chrome's eager measurement mode forces the API's garbage collection immediately instead of waiting for its fallback timeout.
-- **Scope**: All nine browser scenarios use matched fixture data, markup and per-scenario production bundles. Both targets serve pre-exported HTML.
+- **Scope**: All nine browser scenarios use matched fixture data and markup. Compose uses production bundles; React uses a minified ${reactMode} runtime bundle. Both targets serve pre-exported HTML.
 - **DOM verification**: SSR node adoption and workload result assertions run for every sample
 
 | Scenario | Target | First-load TTFB → Ready | Subsequent TTFB → Ready | First interaction | Post-warmup interaction | App RAM first → subsequent | JS heap first → subsequent | Script transfer | DOM elements |

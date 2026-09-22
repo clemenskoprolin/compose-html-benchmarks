@@ -25,6 +25,39 @@ private val skippedThymeleafWorkloads = mapOf(
     "preact-stack" to "renderer does not finish",
 )
 
+internal enum class JvmSsrTarget(val argument: String) {
+    COMPOSE_JVM("compose"),
+    THYMELEAF("thymeleaf"),
+}
+
+internal enum class JvmSsrScenario(val argument: String) {
+    TAILWIND_CATALOG("tailwind-catalog"),
+    FORM_APP("form-app"),
+    DATA_TABLE("data-table"),
+    SVG_DASHBOARD("svg-dashboard"),
+    CONTENT_ARTICLE("content-article"),
+    PREACT_TEXT("preact-text"),
+    PREACT_SEARCH_RESULTS("preact-search-results"),
+    PREACT_STACK("preact-stack"),
+}
+
+internal data class JvmSsrWorkerSettings(
+    val warmups: Int,
+    val samples: Int,
+    val iterations: Int,
+)
+
+internal data class JvmSsrMeasurement(
+    val micros: Double,
+    val allocatedBytes: Double?,
+)
+
+internal data class JvmSsrWorkerResult(
+    val initializationAndFirst: JvmSsrMeasurement,
+    val subsequent: List<JvmSsrMeasurement>,
+    val outputBytes: Int,
+)
+
 private fun count(name: String, default: Int, minimum: Int = 1): Int =
     (System.getenv(name)?.toIntOrNull() ?: if (System.getenv(name) == null) default else error("Invalid $name"))
         .also { require(it >= minimum) { "$name must be >= $minimum" } }
@@ -63,6 +96,70 @@ private fun thymeleafWorkload(name: String, fixture: Any?): (() -> String)? = wh
     else -> null
 }
 
+internal fun runJvmSsrWorker(
+    target: JvmSsrTarget,
+    scenario: JvmSsrScenario,
+    settings: JvmSsrWorkerSettings,
+): JvmSsrWorkerResult {
+    require(settings.warmups >= 0) { "warmups must be >= 0" }
+    require(settings.samples >= 1) { "samples must be >= 1" }
+    require(settings.iterations >= 1) { "iterations must be >= 1" }
+
+    val name = scenario.argument
+    if (target == JvmSsrTarget.THYMELEAF) {
+        skippedThymeleafWorkloads[name]?.let { reason ->
+            error("Thymeleaf $name is not supported: $reason")
+        }
+    }
+
+    val fixture = workloadFixture(name)
+    val allocationBean = ManagementFactory.getThreadMXBean() as? com.sun.management.ThreadMXBean
+    if (allocationBean?.isThreadAllocatedMemorySupported == true && !allocationBean.isThreadAllocatedMemoryEnabled) {
+        allocationBean.isThreadAllocatedMemoryEnabled = true
+    }
+    fun allocated() = if (allocationBean?.isThreadAllocatedMemorySupported == true)
+        allocationBean.getThreadAllocatedBytes(Thread.currentThread().threadId()) else -1L
+    val initializationBefore = allocated()
+    lateinit var render: () -> String
+    lateinit var expected: String
+    val initializationDuration = measureTime {
+        render = if (target == JvmSsrTarget.THYMELEAF) {
+            thymeleafWorkload(name, fixture) ?: error("Unknown Thymeleaf workload: $name")
+        } else {
+            composeWorkload(name, fixture)
+        }
+        expected = render()
+    }
+    val initializationAfter = allocated()
+    val initializationAndFirst = JvmSsrMeasurement(
+        micros = initializationDuration.toDouble(DurationUnit.MICROSECONDS),
+        allocatedBytes = if (initializationBefore >= 0 && initializationAfter >= initializationBefore)
+            (initializationAfter - initializationBefore).toDouble() else null,
+    )
+
+    fun measure(iterationCount: Int = 1): JvmSsrMeasurement {
+        val before = allocated()
+        var html = ""
+        val duration = measureTime {
+            repeat(iterationCount) { html = render() }
+        }
+        val after = allocated()
+        check(html == expected) { "Output changed after first render" }
+        return JvmSsrMeasurement(
+            micros = duration.toDouble(DurationUnit.MICROSECONDS) / iterationCount,
+            allocatedBytes = if (before >= 0 && after >= before) (after - before).toDouble() / iterationCount else null,
+        )
+    }
+
+    repeat(settings.warmups) { check(render() == expected) }
+    val subsequent = List(settings.samples) { measure(settings.iterations) }
+    return JvmSsrWorkerResult(
+        initializationAndFirst = initializationAndFirst,
+        subsequent = subsequent,
+        outputBytes = expected.toByteArray(Charsets.UTF_8).size,
+    )
+}
+
 fun main(args: Array<String>) {
     val mapper = jacksonObjectMapper()
     val warmups = count("BENCHMARK_WARMUPS", 3, 0)
@@ -71,52 +168,17 @@ fun main(args: Array<String>) {
     val repetitions = count("BENCHMARK_REPETITIONS", 3)
 
     if (args.firstOrNull() == "--worker") {
-        val target = if (args.size > 3) args[1] else "compose"
+        val targetArgument = if (args.size > 3) args[1] else "compose"
         val name = if (args.size > 3) args[2] else args[1]
         val resultFile = if (args.size > 3) args[3] else args.getOrNull(2)
-        val fixture = workloadFixture(name)
-        val allocationBean = ManagementFactory.getThreadMXBean() as? com.sun.management.ThreadMXBean
-        if (allocationBean?.isThreadAllocatedMemorySupported == true && !allocationBean.isThreadAllocatedMemoryEnabled) {
-            allocationBean.isThreadAllocatedMemoryEnabled = true
-        }
-        fun allocated() = if (allocationBean?.isThreadAllocatedMemorySupported == true)
-            allocationBean.getThreadAllocatedBytes(Thread.currentThread().threadId()) else -1L
-        val initializationBefore = allocated()
-        lateinit var render: () -> String
-        lateinit var expected: String
-        val initializationDuration = measureTime {
-            render = if (target == "thymeleaf") {
-                thymeleafWorkload(name, fixture) ?: error("Unknown Thymeleaf workload: $name")
-            } else {
-                composeWorkload(name, fixture)
-            }
-            expected = render()
-        }
-        val initializationMicros = initializationDuration.toDouble(DurationUnit.MICROSECONDS)
-        val initializationAfter = allocated()
-        val initializationAndFirst = mapOf(
-            "micros" to initializationMicros,
-            "allocatedBytes" to if (initializationBefore >= 0 && initializationAfter >= initializationBefore)
-                (initializationAfter - initializationBefore).toDouble() else null,
-        )
-
-        fun measure(iterationCount: Int = 1): Map<String, Any?> {
-            val before = allocated()
-            var html = ""
-            val duration = measureTime {
-                repeat(iterationCount) { html = render() }
-            }
-            val micros = duration.toDouble(DurationUnit.MICROSECONDS) / iterationCount
-            val after = allocated()
-            check(html == expected) { "Output changed after first render" }
-            return mapOf("micros" to micros, "allocatedBytes" to if (before >= 0 && after >= before) (after - before).toDouble() / iterationCount else null)
-        }
-        repeat(warmups) { check(render() == expected) }
-        val subsequent = List(samples) { measure(iterations) }
-        val json = mapper.writeValueAsString(mapOf("initializationAndFirst" to initializationAndFirst, "subsequent" to subsequent,
-            "outputBytes" to expected.toByteArray(Charsets.UTF_8).size))
+        val target = JvmSsrTarget.entries.singleOrNull { it.argument == targetArgument }
+            ?: error("Unknown JVM SSR target: $targetArgument")
+        val scenario = JvmSsrScenario.entries.singleOrNull { it.argument == name }
+            ?: error("Unknown JVM SSR scenario: $name")
+        val result = runJvmSsrWorker(target, scenario, JvmSsrWorkerSettings(warmups, samples, iterations))
+        val json = mapper.writeValueAsString(result)
         if (resultFile != null) File(resultFile).writeText(json) else print(json)
-        
+
         return
     }
 

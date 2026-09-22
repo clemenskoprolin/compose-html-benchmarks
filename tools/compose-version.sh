@@ -59,6 +59,12 @@ if [[ -f "$ENV_FILE" ]]; then
   set +a
 fi
 
+export BENCHMARK_REACT_MODE="${BENCHMARK_REACT_MODE:-production}"
+if [[ "$BENCHMARK_REACT_MODE" != "production" && "$BENCHMARK_REACT_MODE" != "development" ]]; then
+  echo "BENCHMARK_REACT_MODE must be production or development." >&2
+  exit 1
+fi
+
 read_local_property() {
   [[ -f "$REPO_ROOT/local.properties" ]] || return 0
   awk -v key="$1" 'index($0, key "=") == 1 { print substr($0, length(key) + 2); exit }' \
@@ -228,6 +234,7 @@ fi
 echo ""
 echo "Selected Compose HTML checkout: $CHECKOUT"
 echo "Selected Compose HTML revision: $REVISION"
+echo "Selected React runtime mode: $BENCHMARK_REACT_MODE (minified)"
 if [[ -n "$DEPENDENCIES" ]]; then
   echo "Selected modified dependencies: $DEPENDENCIES"
 else
@@ -274,7 +281,7 @@ COMPOSE_CLIENT_SCENARIOS="$(IFS=,; echo "${ALL_SCENARIOS[*]}")" node "$SCRIPT_DI
 
 node "$REPO_ROOT/harness/browser/verify-ssr-workloads.mjs"
 
-VERIFICATION_ARGS=("--checkout=$CHECKOUT" "--revision=$REVISION")
+VERIFICATION_ARGS=("--checkout=$CHECKOUT" "--revision=$REVISION" "--react-mode=$BENCHMARK_REACT_MODE")
 if [[ -n "$DEPENDENCIES" ]]; then
   VERIFICATION_ARGS+=("--dependencies=$DEPENDENCIES")
 fi

@@ -5,11 +5,13 @@ import { readFile, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureSsrRuntime } from "./runtime.mjs";
+import { ensureSsrRuntime, reactRuntimeMode } from "./runtime.mjs";
 import { positiveInteger, rotated, summarize } from "./metrics.mjs";
 import { assertEquivalent } from "./html-equivalence.mjs";
 import { createRunRecord, rootDirectory } from "./run-record.mjs";
 ensureSsrRuntime();
+const reactMode = reactRuntimeMode();
+const reactLabel = reactMode === "development" ? "React 19 (dev)" : "React 19";
 
 const iterations = positiveInteger(process.env.BENCHMARK_ITERATIONS ?? 100, "BENCHMARK_ITERATIONS");
 const trials = positiveInteger(process.env.BENCHMARK_TRIALS ?? 15, "BENCHMARK_TRIALS");
@@ -87,7 +89,7 @@ export async function printComparisonTable(results = null, customScenarios = nul
           const reactFirstStr = `${reactResult.initializationAndFirst.median.toFixed(3)} ms`;
           const reactWarmStr = `${reactResult.postWarmup.median.toFixed(3)} ms`;
           console.log(
-            `${"".padEnd(25)} ${"React 19".padEnd(16)} ${reactFirstStr.padStart(22)} ${reactWarmStr.padStart(20)} ${"—".padStart(18)}`
+            `${"".padEnd(25)} ${reactLabel.padEnd(16)} ${reactFirstStr.padStart(22)} ${reactWarmStr.padStart(20)} ${"—".padStart(18)}`
           );
         }
 
@@ -121,10 +123,13 @@ if (process.argv[2] === "--worker") {
 } else if (printTableOnly) {
   await printComparisonTable();
 } else {
-  const record = await createRunRecord("ssr", { repetitions, iterations, trials, warmups, nodeStackKiB: 8192, nodeEnv: process.env.NODE_ENV, clock: "performance.now" });
+  const record = await createRunRecord("ssr", {
+    repetitions, iterations, trials, warmups, nodeStackKiB: 8192,
+    reactMode, reactMinified: true, nodeEnv: process.env.NODE_ENV, clock: "performance.now",
+  });
   record.metadata.executionOrder = [];
   console.log("=".repeat(124));
-  console.log("REACT 19 SSR BENCHMARK");
+  console.log(`${reactLabel.toUpperCase()} SSR BENCHMARK`);
   console.log("=".repeat(124));
   console.log(`Settings: ${repetitions} Node processes; each: renderer initialization + first render, ${warmups} warmups, ${trials} trials of ${iterations} renders | Stack 8m`);
   console.log(`Scenarios: ${scenarios.join(", ")}`);
@@ -136,7 +141,7 @@ if (process.argv[2] === "--worker") {
       record.metadata.executionOrder.push({ repetition, scenario });
       process.stdout.write(`  React SSR process ${repetition + 1}/${repetitions} (${scenario})... `);
       const result = execFileSync(process.execPath, ["--stack-size=8192", fileURLToPath(import.meta.url), "--worker", scenario], {
-        encoding: "utf8", env: { ...process.env, NODE_ENV: "production" }, maxBuffer: 10 * 1024 * 1024,
+        encoding: "utf8", env: { ...process.env, NODE_ENV: reactMode }, maxBuffer: 10 * 1024 * 1024,
       });
       const parsed = JSON.parse(result);
       const warmMedian = summarize(parsed.samples).median;
@@ -169,7 +174,10 @@ if (process.argv[2] === "--worker") {
   console.log("-".repeat(124));
 
   await writeFile(resolve(record.directory, "ssr-results.json"), JSON.stringify(results, null, 2) + "\n");
-  await writeFile(resolve(record.directory, "ssr-results.md"), `# React SSR results\n\nProduction React, fixed 8 MiB Node stack and the monotonic \`performance.now()\` clock. Each workload starts in a fresh process for each of ${repetitions} repetitions. Renderer initialization + first render starts before that workload's isolated production server-render module is loaded and ends when its first HTML string is complete; unrelated workload modules, process startup and fixture initialization are excluded. Each process performs ${warmups} warmups and ${trials} trials of ${iterations} renders; subsequent values are trial means. First output must match Compose's DOM, attributes and text; later output must remain identical.\n\n| Scenario | Renderer initialization + first render median | Subsequent trial median |\n| :--- | ---: | ---: |\n${rows.join("\n")}\n\nBoth React and Compose construct their element and composable structures dynamically per render. The primary SSR performance gap is architectural: Compose HTML executes a full composition lifecycle (Recomposer, ControlledComposition, slot tables, snapshot state), materializes an intermediate StringHtmlElementNode tree in memory, and serializes it in a second pass, whereas React's renderToString streams escaped markup directly into a buffer in a single pass.\n\nRaw trials and per-process summaries are retained in JSON. p95 is suppressed below 20 observations.\n`);
+  const modeDescription = reactMode === "development"
+    ? "React development diagnostics with esbuild minification enabled"
+    : "Production React with esbuild minification enabled";
+  await writeFile(resolve(record.directory, "ssr-results.md"), `# React SSR results\n\n${modeDescription}, fixed 8 MiB Node stack and the monotonic \`performance.now()\` clock. Each workload starts in a fresh process for each of ${repetitions} repetitions. Renderer initialization + first render starts before that workload's isolated ${reactMode} server-render module is loaded and ends when its first HTML string is complete; unrelated workload modules, process startup and fixture initialization are excluded. Each process performs ${warmups} warmups and ${trials} trials of ${iterations} renders; subsequent values are trial means. First output must match Compose's DOM, attributes and text; later output must remain identical.\n\n| Scenario | Renderer initialization + first render median | Subsequent trial median |\n| :--- | ---: | ---: |\n${rows.join("\n")}\n\nBoth React and Compose construct their element and composable structures dynamically per render. The primary SSR performance gap is architectural: Compose HTML executes a full composition lifecycle (Recomposer, ControlledComposition, slot tables, snapshot state), materializes an intermediate StringHtmlElementNode tree in memory, and serializes it in a second pass, whereas React's renderToString streams escaped markup directly into a buffer in a single pass.\n\nRaw trials and per-process summaries are retained in JSON. p95 is suppressed below 20 observations.\n`);
   await record.complete();
 
   if (!deferTable) {

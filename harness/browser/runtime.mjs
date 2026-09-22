@@ -23,13 +23,22 @@ export function loadBenchmarkEnv() {
   }
 }
 
+export function reactRuntimeMode() {
+  const mode = process.env.BENCHMARK_REACT_MODE || "production";
+  if (mode !== "production" && mode !== "development") {
+    throw new Error(`BENCHMARK_REACT_MODE must be "production" or "development", got: ${mode}`);
+  }
+  return mode;
+}
+
 // React's synchronous deep-tree fallback loses wrappers with Node's default stack.
 // Apply the same fixed stack in exports, verification, and every SSR worker.
 export function ensureSsrRuntime() {
   loadBenchmarkEnv();
-  if (process.env.NODE_ENV === "production" && process.execArgv.includes("--stack-size=8192")) return;
+  const mode = reactRuntimeMode();
+  if (process.env.NODE_ENV === mode && process.execArgv.includes("--stack-size=8192")) return;
   const result = spawnSync(process.execPath, ["--stack-size=8192", ...process.argv.slice(1)], {
-    stdio: "inherit", env: { ...process.env, NODE_ENV: "production" },
+    stdio: "inherit", env: { ...process.env, NODE_ENV: mode },
   });
   if (result.error) throw result.error;
   process.exit(result.status ?? 1);

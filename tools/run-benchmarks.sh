@@ -42,6 +42,9 @@ Shared configuration:
   --repetitions=N           Fresh process repetitions for both SSR and browser runs (default: 3)
   --warmups=N               Discarded renders/loads before sampling in each process
                             (defaults: 3 for SSR, 1 for browser; this option overrides both)
+  --react-mode=MODE         React runtime: production (default) or development.
+                            Both modes stay minified; development retains React diagnostics.
+                            Prepared artifacts must match the selected mode.
 
 Browser hydration/startup:
   --targets=LIST            Comma-separated browser targets (default: react,compose-wasm,compose-js)
@@ -128,6 +131,10 @@ while [[ $# -gt 0 ]]; do
       export BENCHMARK_TARGETS="${1#*=}"
       shift
       ;;
+    --react-mode=*)
+      export BENCHMARK_REACT_MODE="${1#*=}"
+      shift
+      ;;
     *)
       echo "Unknown option: $1" >&2
       echo "" >&2
@@ -136,6 +143,12 @@ while [[ $# -gt 0 ]]; do
       ;;
   esac
 done
+
+export BENCHMARK_REACT_MODE="${BENCHMARK_REACT_MODE:-production}"
+if [[ "$BENCHMARK_REACT_MODE" != "production" && "$BENCHMARK_REACT_MODE" != "development" ]]; then
+  echo "--react-mode must be production or development." >&2
+  exit 1
+fi
 
 read_local_property() {
   [[ -f "$REPO_ROOT/local.properties" ]] || return 0
@@ -188,7 +201,7 @@ GRADLE_COMPOSE_ARGS=("-Pcompose.html.checkout=$CHECKOUT"
   -I "$SCRIPT_DIR/dependencies.init.gradle"
   --no-configuration-cache --console=plain)
 
-VERIFICATION_CHECK_ARGS=("--checkout=$CHECKOUT" "--revision=$REVISION")
+VERIFICATION_CHECK_ARGS=("--checkout=$CHECKOUT" "--revision=$REVISION" "--react-mode=$BENCHMARK_REACT_MODE")
 if [[ -n "$DEPENDENCIES" ]]; then
   VERIFICATION_CHECK_ARGS+=("--dependencies=$DEPENDENCIES")
 fi

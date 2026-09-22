@@ -1,0 +1,11 @@
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Profile JVM SSR" type="JetRunConfigurationType">
+    <module name="compose-html-benchmarks.harness.jvm.main" />
+    <option name="MAIN_CLASS_NAME" value="benchmarks.analysis.SsrProfilerKt" />
+    <option name="VM_PARAMETERS" value="-Xss16m" />
+    <option name="WORKING_DIRECTORY" value="$PROJECT_DIR$" />
+    <method v="2">
+      <option name="Make" enabled="true" />
+    </method>
+  </configuration>
+</component>

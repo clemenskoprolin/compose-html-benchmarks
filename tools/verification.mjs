@@ -105,6 +105,7 @@ async function fingerprint() {
   return {
     checkout,
     expectedRevision: options.revision,
+    reactMode: options["react-mode"] ?? "production",
     compose: await composeFingerprint(checkout),
     dependencies: deps ? await dependenciesFingerprint(deps) : null,
     sources: await contentFingerprint(rootDirectory, ["--cached", "--others", "--exclude-standard", "--", "implementations", "workloads"]),
@@ -115,6 +116,7 @@ async function fingerprint() {
 const describe = {
   checkout: "Compose checkout path",
   expectedRevision: "expected Compose revision",
+  reactMode: "React runtime mode",
   "compose.revision": "Compose checkout HEAD",
   "compose.diffSha256": "uncommitted changes in the Compose checkout",
   "compose.untrackedSha256": "untracked files in the Compose checkout",

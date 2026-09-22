@@ -65,6 +65,9 @@ npm run benchmark:ssr
 npm run benchmark:browser
 ```
 
+To profile JVM SSR, select targets and scenarios in `SsrProfiler.kt`,
+then profile the **Profile JVM SSR** run configuration.
+
 Copy `tools/benchmarks.env.example` to the ignored `tools/benchmarks.env` to keep
 machine-specific defaults. CLI options and environment variables can override it.
 
