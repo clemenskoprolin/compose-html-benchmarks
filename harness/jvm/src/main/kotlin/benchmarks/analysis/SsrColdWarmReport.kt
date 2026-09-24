@@ -13,7 +13,8 @@ import kotlin.time.measureTime
 
 private val workloadNames = listOf(
     "tailwind-catalog", "form-app", "data-table", "svg-dashboard", "content-article",
-    "preact-text", "preact-search-results", "preact-stack",
+    "preact-text", "preact-search-results", "preact-stack", "raw-text-style", "raw-text-elements",
+    "style-heavy-catalog",
 )
 
 private val thymeleafWorkloads = setOf(
@@ -39,6 +40,9 @@ internal enum class JvmSsrScenario(val argument: String) {
     PREACT_TEXT("preact-text"),
     PREACT_SEARCH_RESULTS("preact-search-results"),
     PREACT_STACK("preact-stack"),
+    RAW_TEXT_STYLE("raw-text-style"),
+    RAW_TEXT_ELEMENTS("raw-text-elements"),
+    STYLE_HEAVY_CATALOG("style-heavy-catalog"),
 }
 
 internal data class JvmSsrWorkerSettings(
@@ -62,6 +66,12 @@ private fun count(name: String, default: Int, minimum: Int = 1): Int =
     (System.getenv(name)?.toIntOrNull() ?: if (System.getenv(name) == null) default else error("Invalid $name"))
         .also { require(it >= minimum) { "$name must be >= $minimum" } }
 
+private fun composeHtmlValidationMode(): String =
+    when (System.getenv("COMPOSE_HTML_VALIDATE_STRICTLY")?.trim()?.lowercase()) {
+        "true", "1" -> "strict"
+        else -> "fast"
+    }
+
 private fun median(values: List<Double>): Double? {
     if (values.isEmpty()) return null
     val sorted = values.sorted()
@@ -76,6 +86,8 @@ private fun workloadFixture(name: String): Any? = when (name) {
     "content-article" -> articleFixture()
     "preact-search-results" -> preactSearchResultsFixture()
     "preact-text", "preact-stack" -> null
+    "raw-text-style", "raw-text-elements" -> null
+    "style-heavy-catalog" -> catalogFixture()
     else -> error("Unknown workload: $name")
 }
 
@@ -88,12 +100,30 @@ private fun composeWorkload(name: String, fixture: Any?): () -> String = when (n
     "preact-text" -> ::renderPreactText
     "preact-search-results" -> { { renderPreactSearchResults(fixture as PreactSearchResultsData) } }
     "preact-stack" -> ::renderPreactStack
+    "raw-text-style" -> ::renderRawTextStyle
+    "raw-text-elements" -> ::renderRawTextElements
+    "style-heavy-catalog" -> { { renderStyleHeavyCatalog(fixture as CatalogData) } }
     else -> error("Unknown workload: $name")
 }
 
 private fun thymeleafWorkload(name: String, fixture: Any?): (() -> String)? = when (name) {
     in thymeleafWorkloads -> { { ThymeleafRenderer.render(name, mapOf("data" to fixture)) } }
     else -> null
+}
+
+internal fun prepareJvmSsrWorkload(target: JvmSsrTarget, scenario: JvmSsrScenario): () -> String {
+    val name = scenario.argument
+    if (target == JvmSsrTarget.THYMELEAF) {
+        skippedThymeleafWorkloads[name]?.let { reason ->
+            error("Thymeleaf $name is not supported: $reason")
+        }
+    }
+    val fixture = workloadFixture(name)
+    return if (target == JvmSsrTarget.THYMELEAF) {
+        thymeleafWorkload(name, fixture) ?: error("Unknown Thymeleaf workload: $name")
+    } else {
+        composeWorkload(name, fixture)
+    }
 }
 
 internal fun runJvmSsrWorker(
@@ -208,6 +238,8 @@ fun main(args: Array<String>) {
     println(if (hasThymeleafWorkloads) "JVM SSR BENCHMARK — COMPOSE JVM & THYMELEAF" else "COMPOSE JVM SSR BENCHMARK")
     println("=".repeat(124))
     println("Settings: $repetitions JVM processes; each: renderer initialization + first render, $warmups warmups, $samples trials of $iterations renders | Stack 16m")
+    println("Compose HTML string rendering: ${composeHtmlStringRenderingMode()}")
+    println("Compose HTML validation: ${composeHtmlValidationMode()}")
     println("Workloads: ${activeWorkloadNames.joinToString(", ")}")
     println()
 
@@ -218,6 +250,9 @@ fun main(args: Array<String>) {
             System.out.flush()
             val resultFile = File(directory, "compose-$name-$repetition.worker.json")
             val command = mutableListOf(javaExecutable, "-Xss16m")
+            System.getProperty(COMPOSE_HTML_STRING_RENDERING_PROPERTY)?.let {
+                command += "-D$COMPOSE_HTML_STRING_RENDERING_PROPERTY=$it"
+            }
             System.getProperty("benchmarks.profile.directory")?.let { path ->
                 val profile = File(path, "compose-$name-$repetition.jfr")
                 profile.parentFile.mkdirs()
@@ -317,7 +352,7 @@ fun main(args: Array<String>) {
     }
 
     File(directory, "jvm-results.json").writeText(mapper.writerWithDefaultPrettyPrinter().writeValueAsString(mapOf(
-        "settings" to mapOf("repetitions" to repetitions, "warmups" to warmups, "trials" to samples, "iterations" to iterations, "stack" to "16m", "clock" to "kotlin.time.TimeSource.Monotonic"),
+        "settings" to mapOf("repetitions" to repetitions, "warmups" to warmups, "trials" to samples, "iterations" to iterations, "stack" to "16m", "clock" to "kotlin.time.TimeSource.Monotonic", "composeStringRendering" to composeHtmlStringRenderingMode(), "composeValidation" to composeHtmlValidationMode()),
         "runtime" to mapOf("java" to System.getProperty("java.version"), "vm" to System.getProperty("java.vm.name"),
             "os" to System.getProperty("os.name"), "osVersion" to System.getProperty("os.version"), "arch" to System.getProperty("os.arch")),
         "rawProcesses" to composeResults,
@@ -326,7 +361,7 @@ fun main(args: Array<String>) {
     )))
     File(directory, "jvm-results.md").writeText("""# Compose JVM SSR results
 
-Each workload runs in $repetitions fresh JVMs with a 16 MiB stack and Kotlin's monotonic `measureTime` clock. Renderer initialization + first render starts before the workload renderer is resolved and ends when its first HTML string is complete; it excludes process and fixture initialization. Each process performs $warmups warmups, then $samples trials of $iterations renders; subsequent timings and allocations are per-render trial means. Raw timings and allocations are retained in JSON. Unavailable allocation counters are null.
+Each workload runs in $repetitions fresh JVMs with a 16 MiB stack and Kotlin's monotonic `measureTime` clock. Compose HTML string rendering mode: ${composeHtmlStringRenderingMode()}; HTML validation: ${composeHtmlValidationMode()}. Renderer initialization + first render starts before the workload renderer is resolved and ends when its first HTML string is complete; it excludes process and fixture initialization. Each process performs $warmups warmups, then $samples trials of $iterations renders; subsequent timings and allocations are per-render trial means. Raw timings and allocations are retained in JSON. Unavailable allocation counters are null.
 
 | Scenario | Renderer initialization + first render median | Subsequent median | Subsequent allocation median |
 | :--- | ---: | ---: | ---: |

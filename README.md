@@ -65,8 +65,8 @@ npm run benchmark:ssr
 npm run benchmark:browser
 ```
 
-To profile JVM SSR, select targets and scenarios in `SsrProfiler.kt`,
-then profile the **Profile JVM SSR** run configuration.
+To profile JVM SSR, select targets and scenarios in `SsrProfiler.kt`, then use the
+**Profile JVM SSR** run configuration.
 
 Copy `tools/benchmarks.env.example` to the ignored `tools/benchmarks.env` to keep
 machine-specific defaults. CLI options and environment variables can override it.
@@ -78,7 +78,10 @@ The main runner produces two complementary comparisons:
 | Suite | Targets | Measures |
 | --- | --- | --- |
 | Browser | React, Compose JS, Compose Wasm | Fresh-context startup, FCP, app readiness, interaction, transfer size and memory |
-| SSR | React and Compose JVM | Renderer initialization/first render and repeated string rendering |
+| SSR | React and Compose JVM | Renderer initialization/first render, repeated string rendering and allocated heap per render |
+
+React allocation is estimated in a separate untimed V8 sampling pass that includes objects
+collected by GC. Compose reports exact JVM thread allocation counters.
 
 Browser runs use independent browser processes, disabled network caches, ac 4× CPU / 40 ms network-latency profile by
 default. Both frameworks receive pre-exported HTML from the same server, so browser

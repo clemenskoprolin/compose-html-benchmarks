@@ -3,10 +3,9 @@ package benchmarks.compose
 import androidx.compose.runtime.Composable
 import benchmarks.model.PreactSearchResultsData
 import org.jetbrains.compose.web.attributes.*
-import org.jetbrains.compose.web.composeHtmlToString
 import org.jetbrains.compose.web.dom.*
 
-fun renderPreactSearchResults(data: PreactSearchResultsData): String = composeHtmlToString {
+fun renderPreactSearchResults(data: PreactSearchResultsData): String = renderComposeHtmlToString("preact-search-results") {
     Div(attrs = { classes("search-results") }) {
         Div {
             data.items.forEach { item ->

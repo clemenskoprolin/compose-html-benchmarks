@@ -284,6 +284,8 @@ async function run() {
   let browser;
   try {
     const observations = Object.fromEntries(scenarios.map(scenario => [scenario, {}]));
+    const totalScenarioEvaluations = repetitions * scenarios.length;
+    let scenarioEvaluation = 0;
     for (let repetition = 0; repetition < repetitions; repetition++) {
       if (browser) await browser.close();
       try {
@@ -299,7 +301,7 @@ async function run() {
 
       record.metadata.browserVersions.push(browser.version());
       for (const scenario of rotated(scenarios, repetition)) {
-        console.log(`\nEvaluating scenario: [${scenario}]`);
+        console.log(`\nEvaluating scenario: [${scenario}] (${++scenarioEvaluation}/${totalScenarioEvaluations})`);
 
         const activeTargets = targets.filter(
           (target) => target === "react" || !target.includes("table-unchecked") || scenario === "hydrate1k",

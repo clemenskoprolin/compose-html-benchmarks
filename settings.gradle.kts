@@ -19,7 +19,7 @@ val localProperties = java.util.Properties().apply {
     file("local.properties").takeIf { it.isFile }?.inputStream()?.use(::load)
 }
 val useIncludedComposeBuild = providers.gradleProperty("compose.html.use.included.build")
-    .orElse("true").get().toBoolean()
+    .orElse("false").get().toBoolean()
 
 dependencyResolutionManagement {
     repositories {

@@ -2,10 +2,9 @@ package benchmarks.compose
 
 import androidx.compose.runtime.Composable
 import org.jetbrains.compose.web.attributes.*
-import org.jetbrains.compose.web.composeHtmlToString
 import org.jetbrains.compose.web.dom.*
 
-fun renderPreactStack(): String = composeHtmlToString {
+fun renderPreactStack(): String = renderComposeHtmlToString("preact-stack") {
     Div { repeat(10) { PreactStackBranch(1_000) } }
 }
 

@@ -1,7 +1,9 @@
 package benchmarks.compose
 
 import benchmarks.model.SvgDashboardData
-import org.jetbrains.compose.web.composeHtmlToString
 
-fun renderSvgDashboard(data: SvgDashboardData): String = composeHtmlToString { SvgDashboardDocument(data) }
-fun renderSvgDashboardBody(data: SvgDashboardData): String = composeHtmlToString { SvgDashboard(data) }
+fun renderSvgDashboard(data: SvgDashboardData): String =
+    renderComposeHtmlToString("svg-dashboard") { SvgDashboardDocument(data) }
+
+fun renderSvgDashboardBody(data: SvgDashboardData): String =
+    renderComposeHtmlToString("svg-dashboard-body") { SvgDashboard(data) }

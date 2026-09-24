@@ -71,10 +71,50 @@ if [[ -n "$DEPENDENCIES" && -d "$DEPENDENCIES" ]]; then
         "$REPO_ROOT/gradlew" -p "$DEPENDENCIES/$SUB" publishToMavenLocal \
           -Dmaven.repo.local="$REPO_ROOT/build/compose-m2" \
           -I "$REPO_ROOT/tools/dependencies.init.gradle" \
-          --no-configuration-cache --console=plain -q || true
+          --no-configuration-cache --console=plain -q
       fi
     fi
   done
+
+  # Local JS/JVM publications can replace the root multiplatform metadata for a
+  # dependency that the benchmark also needs on Wasm. Keep the upstream Wasm
+  # variant redirects so Gradle can resolve that platform from upstream Maven.
+  python3 - "$REPO_ROOT/build/compose-m2" <<'PYTHON'
+import json
+import os
+from pathlib import Path
+import sys
+
+m2 = Path(sys.argv[1])
+gradle_cache = Path(os.environ.get("GRADLE_USER_HOME", Path.home() / ".gradle")) / "caches/modules-2/files-2.1"
+for group, module in (
+    ("androidx.collection", "collection"),
+    ("androidx.compose.runtime", "runtime"),
+):
+    module_dir = m2 / group.replace(".", "/") / module
+    for metadata in sorted(module_dir.glob("*/*.module")):
+        version = metadata.parent.name
+        if metadata.name != f"{module}-{version}.module":
+            continue
+        local = json.loads(metadata.read_text())
+        if any(variant["name"].startswith("wasmJs") for variant in local["variants"]):
+            continue
+        upstream_dir = gradle_cache / group / module / version
+        upstream_files = sorted(upstream_dir.glob(f"*/{module}-{version}.module"))
+        if not upstream_files:
+            raise SystemExit(f"Missing upstream Gradle metadata for {group}:{module}:{version}; cannot preserve Wasm variants")
+        wasm_variants = []
+        for upstream_file in upstream_files:
+            upstream = json.loads(upstream_file.read_text())
+            wasm_variants = [variant for variant in upstream["variants"] if variant["name"].startswith("wasmJs")]
+            if wasm_variants:
+                break
+        if not wasm_variants:
+            raise SystemExit(f"Upstream metadata has no Wasm variants for {group}:{module}:{version}")
+        local["variants"].extend(wasm_variants)
+        metadata.write_text(json.dumps(local, indent=2) + "\n")
+        print(f"Using upstream Wasm variants for {group}:{module}:{version}")
+PYTHON
 
   CUSTOM_DEPENDENCIES_FILE="$(mktemp)"
   find "$REPO_ROOT/build/compose-m2" -type f \( -name '*.pom' -o -name '*.module' \) -print0 |

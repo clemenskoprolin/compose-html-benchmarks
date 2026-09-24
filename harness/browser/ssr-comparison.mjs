@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import { execFileSync } from "node:child_process";
+import { Session } from "node:inspector/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { ensureSsrRuntime, reactRuntimeMode } from "./runtime.mjs";
@@ -12,6 +13,39 @@ import { createRunRecord, rootDirectory } from "./run-record.mjs";
 ensureSsrRuntime();
 const reactMode = reactRuntimeMode();
 const reactLabel = reactMode === "development" ? "React 19 (dev)" : "React 19";
+const allocationSamplingInterval = 32768;
+
+function allocationIterations(outputBytes) {
+  if (outputBytes < 16 * 1024) return 1000;
+  if (outputBytes < 64 * 1024) return 300;
+  return 100;
+}
+
+function sampledBytes(node) {
+  return node.selfSize + node.children.reduce((total, child) => total + sampledBytes(child), 0);
+}
+
+async function measureAllocatedHeap(render, outputBytes, expected) {
+  const iterations = allocationIterations(outputBytes);
+  const session = new Session();
+  session.connect();
+  try {
+    await session.post("HeapProfiler.startSampling", {
+      samplingInterval: allocationSamplingInterval,
+      includeObjectsCollectedByMajorGC: true,
+      includeObjectsCollectedByMinorGC: true,
+    });
+    let html;
+    for (let i = 0; i < iterations; i++) html = render();
+    const { profile } = await session.post("HeapProfiler.stopSampling");
+    assert.equal(html, expected, "Output changed during allocation sampling");
+    const totalBytes = sampledBytes(profile.head);
+    assert(Number.isFinite(totalBytes) && totalBytes > 0, "V8 produced no allocation samples");
+    return { bytesPerRender: totalBytes / iterations, iterations, sampleCount: profile.samples.length };
+  } finally {
+    session.disconnect();
+  }
+}
 
 const iterations = positiveInteger(process.env.BENCHMARK_ITERATIONS ?? 100, "BENCHMARK_ITERATIONS");
 const trials = positiveInteger(process.env.BENCHMARK_TRIALS ?? 15, "BENCHMARK_TRIALS");
@@ -42,7 +76,10 @@ async function worker(scenario) {
     samples.push((performance.now() - start) / iterations);
     assert.equal(lastHtml, firstHtml, `${scenario}: output changed after warmup`);
   }
-  return { initializationAndFirstMs, samples, outputBytes: Buffer.byteLength(firstHtml) };
+  const outputBytes = Buffer.byteLength(firstHtml);
+  // Profile after timing: allocation sampling changes execution speed.
+  const allocatedHeap = await measureAllocatedHeap(render, outputBytes, firstHtml);
+  return { initializationAndFirstMs, samples, outputBytes, allocatedHeap };
 }
 
 const deferTable = process.argv.includes("--defer-table") || process.env.BENCHMARK_DEFER_SSR_TABLE === "true";
@@ -88,8 +125,10 @@ export async function printComparisonTable(results = null, customScenarios = nul
         if (reactResult) {
           const reactFirstStr = `${reactResult.initializationAndFirst.median.toFixed(3)} ms`;
           const reactWarmStr = `${reactResult.postWarmup.median.toFixed(3)} ms`;
+          const reactMemory = reactResult.allocatedHeap?.median;
+          const reactMemStr = reactMemory == null ? "—" : `${(reactMemory / 1024 / 1024).toFixed(2)} MiB*`;
           console.log(
-            `${"".padEnd(25)} ${reactLabel.padEnd(16)} ${reactFirstStr.padStart(22)} ${reactWarmStr.padStart(20)} ${"—".padStart(18)}`
+            `${"".padEnd(25)} ${reactLabel.padEnd(16)} ${reactFirstStr.padStart(22)} ${reactWarmStr.padStart(20)} ${reactMemStr.padStart(18)}`
           );
         }
 
@@ -110,6 +149,7 @@ export async function printComparisonTable(results = null, customScenarios = nul
 
         console.log("-".repeat(124));
       }
+      console.log("* React allocation is a V8 sampling estimate; Compose allocation uses a JVM thread counter.");
     }
   } catch (error) {
     if (!results) {
@@ -126,6 +166,7 @@ if (process.argv[2] === "--worker") {
   const record = await createRunRecord("ssr", {
     repetitions, iterations, trials, warmups, nodeStackKiB: 8192,
     reactMode, reactMinified: true, nodeEnv: process.env.NODE_ENV, clock: "performance.now",
+    allocationProfiler: "V8 HeapProfiler.startSampling", allocationSamplingInterval,
   });
   record.metadata.executionOrder = [];
   console.log("=".repeat(124));
@@ -145,30 +186,32 @@ if (process.argv[2] === "--worker") {
       });
       const parsed = JSON.parse(result);
       const warmMedian = summarize(parsed.samples).median;
-      console.log(`Init + first: ${parsed.initializationAndFirstMs.toFixed(3)} ms | Warm: ${warmMedian.toFixed(3)} ms`);
+      console.log(`Init + first: ${parsed.initializationAndFirstMs.toFixed(3)} ms | Warm: ${warmMedian.toFixed(3)} ms | Sampled heap: ${(parsed.allocatedHeap.bytesPerRender / 1024 / 1024).toFixed(2)} MiB`);
       raw[scenario].push({ repetition, ...parsed });
     }
   }
   const results = Object.fromEntries(Object.entries(raw).map(([scenario, processes]) => [scenario, {
     initializationAndFirst: summarize(processes.map(p => p.initializationAndFirstMs)),
     postWarmup: summarize(processes.flatMap(p => p.samples)),
-    perProcess: processes.map(p => ({ repetition: p.repetition, postWarmup: summarize(p.samples) })),
+    allocatedHeap: summarize(processes.map(p => p.allocatedHeap.bytesPerRender)),
+    perProcess: processes.map(p => ({ repetition: p.repetition, postWarmup: summarize(p.samples), allocatedHeap: p.allocatedHeap })),
     outputBytes: processes[0].outputBytes, rawProcesses: processes,
   }]));
-  const rows = Object.entries(results).map(([scenario, result]) => `| ${scenario} | ${result.initializationAndFirst.median.toFixed(3)} ms | ${result.postWarmup.median.toFixed(3)} ms |`);
+  const rows = Object.entries(results).map(([scenario, result]) => `| ${scenario} | ${result.initializationAndFirst.median.toFixed(3)} ms | ${result.postWarmup.median.toFixed(3)} ms | ${(result.allocatedHeap.median / 1024 / 1024).toFixed(2)} MiB |`);
 
   console.log("\n" + "=".repeat(124));
   console.log("REACT 19 SSR RESULTS");
   console.log("=".repeat(124));
   console.log(
-    `${"Scenario".padEnd(28)} ${"Init + first median".padStart(24)} ${"Subsequent median".padStart(24)}`
+    `${"Scenario".padEnd(28)} ${"Init + first median".padStart(24)} ${"Subsequent median".padStart(24)} ${"Sampled heap".padStart(18)}`
   );
   console.log("-".repeat(124));
   for (const [scenario, result] of Object.entries(results)) {
     const firstStr = `${result.initializationAndFirst.median.toFixed(3)} ms`;
     const warmStr = `${result.postWarmup.median.toFixed(3)} ms`;
+    const heapStr = `${(result.allocatedHeap.median / 1024 / 1024).toFixed(2)} MiB`;
     console.log(
-      `${scenario.padEnd(28)} ${firstStr.padStart(24)} ${warmStr.padStart(24)}`
+      `${scenario.padEnd(28)} ${firstStr.padStart(24)} ${warmStr.padStart(24)} ${heapStr.padStart(18)}`
     );
   }
   console.log("-".repeat(124));
@@ -177,7 +220,7 @@ if (process.argv[2] === "--worker") {
   const modeDescription = reactMode === "development"
     ? "React development diagnostics with esbuild minification enabled"
     : "Production React with esbuild minification enabled";
-  await writeFile(resolve(record.directory, "ssr-results.md"), `# React SSR results\n\n${modeDescription}, fixed 8 MiB Node stack and the monotonic \`performance.now()\` clock. Each workload starts in a fresh process for each of ${repetitions} repetitions. Renderer initialization + first render starts before that workload's isolated ${reactMode} server-render module is loaded and ends when its first HTML string is complete; unrelated workload modules, process startup and fixture initialization are excluded. Each process performs ${warmups} warmups and ${trials} trials of ${iterations} renders; subsequent values are trial means. First output must match Compose's DOM, attributes and text; later output must remain identical.\n\n| Scenario | Renderer initialization + first render median | Subsequent trial median |\n| :--- | ---: | ---: |\n${rows.join("\n")}\n\nBoth React and Compose construct their element and composable structures dynamically per render. The primary SSR performance gap is architectural: Compose HTML executes a full composition lifecycle (Recomposer, ControlledComposition, slot tables, snapshot state), materializes an intermediate StringHtmlElementNode tree in memory, and serializes it in a second pass, whereas React's renderToString streams escaped markup directly into a buffer in a single pass.\n\nRaw trials and per-process summaries are retained in JSON. p95 is suppressed below 20 observations.\n`);
+  await writeFile(resolve(record.directory, "ssr-results.md"), `# React SSR results\n\n${modeDescription}, fixed 8 MiB Node stack and the monotonic \`performance.now()\` clock. Each workload starts in a fresh process for each of ${repetitions} repetitions. Renderer initialization + first render starts before that workload's isolated ${reactMode} server-render module is loaded and ends when its first HTML string is complete; unrelated workload modules, process startup and fixture initialization are excluded. Each process performs ${warmups} warmups and ${trials} trials of ${iterations} renders; subsequent values are trial means. First output must match Compose's DOM, attributes and text; later output must remain identical.\n\nAfter latency trials, each worker separately samples V8 JS heap allocations with a ${allocationSamplingInterval}-byte average interval. Objects collected by minor and major GC are included. The reported bytes per render divide sampled allocated bytes by the number of profiled renders; this is an estimate, unlike Compose's JVM thread allocation counter. Native allocations and retained heap are not measured. Raw profiles are not retained, but sample counts and profiled render counts are in JSON.\n\n| Scenario | Renderer initialization + first render median | Subsequent trial median | Sampled allocated heap per render |\n| :--- | ---: | ---: | ---: |\n${rows.join("\n")}\n\nBoth React and Compose construct their element and composable structures dynamically per render. Compose HTML materializes an intermediate HTML node tree and serializes it in a second pass, whereas React's renderToString writes escaped markup directly into a buffer. Depending on the selected Compose HTML version, repeated renders may reuse the composition and matching HTML nodes; the Compose JVM report records the mode used.\n\nRaw trials and per-process summaries are retained in JSON. p95 is suppressed below 20 observations.\n`);
   await record.complete();
 
   if (!deferTable) {

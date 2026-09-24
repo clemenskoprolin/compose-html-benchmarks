@@ -33,18 +33,23 @@ browser, then measures client startup, DOM adoption or mounting, interaction, tr
 Actions (default: --all):
   --all                     Run complete benchmark suite (SSR reports + browser hydration)
   --ssr                     Run SSR companion reports (Compose JVM vs React SSR)
+  --jvm                     Run Compose JVM SSR report (includes Compose-only scenarios)
   --hydration, --browser    Run Playwright browser hydration benchmarks (Compose Wasm/JS vs React 19)
 
 Shared configuration:
   --scenarios=LIST          Comma-separated scenarios to run (default: all)
                             Available: tailwind-catalog, form-app, data-table, svg-dashboard,
-                                       content-article, hydrate1k, update10th1k, reorder1k, filter-list
+                                       content-article, hydrate1k, update10th1k, reorder1k,
+                                       filter-list; raw-text-style, raw-text-elements, and
+                                       style-heavy-catalog are JVM-only (--jvm)
   --repetitions=N           Fresh process repetitions for both SSR and browser runs (default: 3)
   --warmups=N               Discarded renders/loads before sampling in each process
                             (defaults: 3 for SSR, 1 for browser; this option overrides both)
   --react-mode=MODE         React runtime: production (default) or development.
                             Both modes stay minified; development retains React diagnostics.
                             Prepared artifacts must match the selected mode.
+  --compose-validation=MODE Compose JVM HTML validation: fast (default) or strict.
+                            Strict enables COMPOSE_HTML_VALIDATE_STRICTLY; browser rendering stays fast.
 
 Browser hydration/startup:
   --targets=LIST            Comma-separated browser targets (default: react,compose-wasm,compose-js)
@@ -54,6 +59,9 @@ Browser hydration/startup:
 Server-side rendering (SSR):
   --trials=N                Timed sample groups per server process after warmup (default: 15)
   --iterations=N            HTML renders performed and averaged in each trial (default: 100)
+  --compose-string-rendering=MODE
+                            Compose JVM renderer: keyed or unkeyed.
+                            Default: keyed when supported, otherwise unkeyed.
 
 Help:
   -h, --help                Display this help message and exit
@@ -102,6 +110,10 @@ while [[ $# -gt 0 ]]; do
       ACTION="ssr"
       shift
       ;;
+    --jvm)
+      ACTION="jvm"
+      shift
+      ;;
     --hydration|--browser|--client)
       ACTION="hydration"
       shift
@@ -135,6 +147,14 @@ while [[ $# -gt 0 ]]; do
       export BENCHMARK_REACT_MODE="${1#*=}"
       shift
       ;;
+    --compose-validation=*)
+      export BENCHMARK_COMPOSE_VALIDATION="${1#*=}"
+      shift
+      ;;
+    --compose-string-rendering=*)
+      export BENCHMARK_COMPOSE_STRING_RENDERING="${1#*=}"
+      shift
+      ;;
     *)
       echo "Unknown option: $1" >&2
       echo "" >&2
@@ -148,6 +168,49 @@ export BENCHMARK_REACT_MODE="${BENCHMARK_REACT_MODE:-production}"
 if [[ "$BENCHMARK_REACT_MODE" != "production" && "$BENCHMARK_REACT_MODE" != "development" ]]; then
   echo "--react-mode must be production or development." >&2
   exit 1
+fi
+
+compose_validation_setting="${BENCHMARK_COMPOSE_VALIDATION-${COMPOSE_HTML_VALIDATE_STRICTLY:-false}}"
+compose_validation_setting="${compose_validation_setting#"${compose_validation_setting%%[![:space:]]*}"}"
+compose_validation_setting="${compose_validation_setting%"${compose_validation_setting##*[![:space:]]}"}"
+compose_validation_setting="$(printf '%s' "$compose_validation_setting" | tr '[:upper:]' '[:lower:]')"
+case "$compose_validation_setting" in
+  ""|fast|false|0)
+    export BENCHMARK_COMPOSE_VALIDATION=fast
+    export COMPOSE_HTML_VALIDATE_STRICTLY=false
+    ;;
+  strict|true|1)
+    export BENCHMARK_COMPOSE_VALIDATION=strict
+    export COMPOSE_HTML_VALIDATE_STRICTLY=true
+    ;;
+  *)
+    echo "--compose-validation must be fast or strict (COMPOSE_HTML_VALIDATE_STRICTLY must be true or false)." >&2
+    exit 1
+    ;;
+esac
+
+if [[ -n "${BENCHMARK_COMPOSE_STRING_RENDERING+x}" ]]; then
+  case "$BENCHMARK_COMPOSE_STRING_RENDERING" in
+    keyed|unkeyed) ;;
+    *)
+      echo "--compose-string-rendering must be keyed or unkeyed." >&2
+      exit 1
+      ;;
+  esac
+fi
+
+if [[ "$ACTION" != "jvm" && -n "${BENCHMARK_SCENARIOS:-}" ]]; then
+  IFS=',' read -r -a requested_scenarios <<< "$BENCHMARK_SCENARIOS"
+  for scenario in "${requested_scenarios[@]}"; do
+    scenario="${scenario#"${scenario%%[![:space:]]*}"}"
+    scenario="${scenario%"${scenario##*[![:space:]]}"}"
+    case "$scenario" in
+      raw-text-style|raw-text-elements|style-heavy-catalog)
+        echo "Scenario '$scenario' is JVM-only; use --jvm." >&2
+        exit 1
+        ;;
+    esac
+  done
 fi
 
 read_local_property() {
@@ -208,7 +271,9 @@ fi
 node "$SCRIPT_DIR/verification.mjs" check "${VERIFICATION_CHECK_ARGS[@]}"
 
 
-if [[ "$ACTION" == "ssr" ]]; then
+if [[ "$ACTION" == "jvm" ]]; then
+  node "$SCRIPT_DIR/run-jvm-report.mjs" "${GRADLE_COMPOSE_ARGS[@]}" -q
+elif [[ "$ACTION" == "ssr" ]]; then
   node "$SCRIPT_DIR/run-jvm-report.mjs" "${GRADLE_COMPOSE_ARGS[@]}" -q
   node "$REPO_ROOT/harness/browser/ssr-comparison.mjs"
 elif [[ "$ACTION" == "hydration" ]]; then
