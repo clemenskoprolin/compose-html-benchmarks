@@ -36,7 +36,8 @@ Shared configuration:
                                        content-article, hydrate1k, update10th1k, reorder1k,
                                        filter-list; raw-text-style, raw-text-elements, and
                                        style-heavy-catalog are JVM/Wasm Node only (--jvm or --wasm)
-  --repetitions=N           Fresh process repetitions for both SSR and browser runs (default: 3)
+  --repetitions=N           Fresh process repetitions for both SSR and browser runs
+                            (defaults: 3 for SSR, 2 for browser; this option overrides both)
   --warmups=N               Discarded renders/loads before sampling in each process
                             (defaults: 3 for SSR, 1 for browser; this option overrides both)
   --react-mode=MODE         React runtime: production (default) or development.

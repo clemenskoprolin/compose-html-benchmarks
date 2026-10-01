@@ -17,7 +17,7 @@ const reactMode = reactRuntimeMode();
 
 const benchmarkDirectory = resolve(rootDirectory, "harness/browser");
 const runs = benchmarkCount("BENCHMARK_RUNS", 3);
-const repetitions = benchmarkCount("BENCHMARK_REPETITIONS", 3);
+const repetitions = benchmarkCount("BENCHMARK_REPETITIONS", 2);
 const warmups = benchmarkCount("BENCHMARK_WARMUPS", 1, 0);
 const serverPort = process.env.BENCHMARK_PORT || "4173";
 const browserChannel = process.env.BENCHMARK_BROWSER_CHANNEL || "chrome";
