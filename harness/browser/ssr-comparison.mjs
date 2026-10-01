@@ -1,34 +1,22 @@
 // Runs the React SSR benchmark in fresh Node workers and writes its comparison report.
 // Worker mode times React's server renderer; parent mode coordinates repetitions and summaries.
 import assert from "node:assert/strict";
-import { readFile, writeFile } from "node:fs/promises";
-import { execFileSync } from "node:child_process";
+import { readFile } from "node:fs/promises";
 import { Session } from "node:inspector/promises";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { ensureSsrRuntime, reactRuntimeMode } from "./runtime.mjs";
-import { positiveInteger, rotated, summarize } from "./metrics.mjs";
+import {
+  ensureSsrRuntime, reactRuntimeMode, ssrScenarios, ssrSettings, selectStringSsrScenarios, runNodeWorker, collectSsrProcesses,
+} from "./runtime.mjs";
+import { summarize } from "./metrics.mjs";
 import { assertEquivalent } from "./html-equivalence.mjs";
-import { tableRow } from "./report-table.mjs";
-import { scenarioSummary } from "./benchmark-summary.mjs";
-import { jvmSummaryRecords, ssrMetrics, ssrSummaryRecords } from "./summary-data.mjs";
+import { printComparisonTable, writeReactSsrReport } from "./ssr-report.mjs";
+export { printComparisonTable } from "./ssr-report.mjs";
 import { createRunRecord, rootDirectory } from "./run-record.mjs";
 ensureSsrRuntime();
 const reactMode = reactRuntimeMode();
 const reactLabel = reactMode === "development" ? "React 19 (dev)" : "React 19";
 const allocationSamplingInterval = 32768;
-const comparisonColumns = [
-  { label: "Scenario", width: 25 }, { label: "Target", width: 16 },
-  { label: "Init + first median", width: 22, align: "right" },
-  { label: "Subsequent median", width: 20, align: "right" },
-  { label: "Allocated heap", width: 18, align: "right" },
-];
-const reactColumns = [
-  { label: "Scenario", width: 28 },
-  { label: "Init + first median", width: 24, align: "right" },
-  { label: "Subsequent median", width: 24, align: "right" },
-  { label: "Sampled heap", width: 18, align: "right" },
-];
 
 function allocationIterations(outputBytes) {
   if (outputBytes < 16 * 1024) return 1000;
@@ -62,15 +50,12 @@ async function measureAllocatedHeap(render, outputBytes, expected) {
   }
 }
 
-const iterations = positiveInteger(process.env.BENCHMARK_ITERATIONS ?? 100, "BENCHMARK_ITERATIONS");
-const trials = positiveInteger(process.env.BENCHMARK_TRIALS ?? 15, "BENCHMARK_TRIALS");
-const warmups = positiveInteger(process.env.BENCHMARK_WARMUPS ?? process.env.BENCHMARK_WARMUP ?? 3, "BENCHMARK_WARMUPS", 0);
-const repetitions = positiveInteger(process.env.BENCHMARK_REPETITIONS ?? 3, "BENCHMARK_REPETITIONS");
-const allScenarios = ["tailwind-catalog", "form-app", "data-table", "svg-dashboard", "content-article", "preact-text", "preact-search-results", "preact-stack"];
+const { iterations, trials, warmups, repetitions } = ssrSettings({
+  warmups: process.env.BENCHMARK_WARMUPS ?? process.env.BENCHMARK_WARMUP ?? 3,
+});
+const allScenarios = ssrScenarios;
 const requestedScenarios = process.env.BENCHMARK_SCENARIOS?.split(",").map(s => s.trim()).filter(Boolean);
-const scenarios = (requestedScenarios && requestedScenarios.length > 0)
-  ? (allScenarios.filter(s => requestedScenarios.includes(s)).length > 0 ? allScenarios.filter(s => requestedScenarios.includes(s)) : allScenarios)
-  : allScenarios;
+const scenarios = selectStringSsrScenarios(allScenarios);
 
 async function worker(scenario) {
   assert(allScenarios.includes(scenario), `Unknown scenario: ${scenario}`);
@@ -100,87 +85,10 @@ async function worker(scenario) {
 const deferTable = process.argv.includes("--defer-table") || process.env.BENCHMARK_DEFER_SSR_TABLE === "true";
 const printTableOnly = process.argv.includes("--print-table") || process.argv.includes("--table-only");
 
-export async function printComparisonTable(results = null, customScenarios = null) {
-  try {
-    const jvmResultsPath = resolve(rootDirectory, "results/runs/latest/jvm-results.json");
-    const jvmData = JSON.parse(await readFile(jvmResultsPath, "utf8"));
-    const jvmRaw = jvmData.rawProcesses || {};
-    const thymeleafRaw = jvmData.thymeleafProcesses || {};
-    if (!results) {
-      const ssrResultsPath = resolve(rootDirectory, "results/runs/latest/ssr-results.json");
-      results = JSON.parse(await readFile(ssrResultsPath, "utf8"));
-    }
-    const targetScenarios = customScenarios || (requestedScenarios && requestedScenarios.length > 0 ? scenarios : Object.keys(results));
-    const commonScenarios = targetScenarios.filter(s => jvmRaw[s] && jvmRaw[s].length > 0);
-    if (commonScenarios.length > 0) {
-      const hasThymeleaf = Object.values(thymeleafRaw).some(processes => processes.length > 0);
-      console.log("\n" + "=".repeat(124));
-      console.log("SSR COMPARISON RESULTS — COMPOSE JVM vs REACT 19" + (hasThymeleaf ? " vs THYMELEAF" : ""));
-      console.log("=".repeat(124));
-      console.log(
-        tableRow(comparisonColumns, comparisonColumns.map(column => column.label))
-      );
-      console.log("-".repeat(124));
-      for (const scenario of commonScenarios) {
-        const jvmProcesses = jvmRaw[scenario] || [];
-        const jvmFirstMedian = summarize(jvmProcesses.map(p => p.initializationAndFirst.micros)).median;
-        const jvmWarmSamples = jvmProcesses.flatMap(p => p.subsequent.map(s => s.micros));
-        const jvmWarmMedian = summarize(jvmWarmSamples).median;
-        const jvmAllocSamples = jvmProcesses.flatMap(p => p.subsequent.map(s => s.allocatedBytes).filter(b => b != null));
-        const jvmAllocMedian = jvmAllocSamples.length ? summarize(jvmAllocSamples).median : null;
-        const jvmMemStr = jvmAllocMedian != null ? `${(jvmAllocMedian / 1024 / 1024).toFixed(2)} MiB` : "n/a";
-        const jvmFirstStr = `${(jvmFirstMedian / 1000).toFixed(3)} ms`;
-        const jvmWarmStr = `${(jvmWarmMedian / 1000).toFixed(3)} ms`;
-
-        console.log(
-          tableRow(comparisonColumns, [scenario, "Compose JVM", jvmFirstStr, jvmWarmStr, jvmMemStr])
-        );
-
-        const reactResult = results[scenario];
-        if (reactResult) {
-          const reactFirstStr = `${reactResult.initializationAndFirst.median.toFixed(3)} ms`;
-          const reactWarmStr = `${reactResult.postWarmup.median.toFixed(3)} ms`;
-          const reactMemory = reactResult.allocatedHeap?.median;
-          const reactMemStr = reactMemory == null ? "—" : `${(reactMemory / 1024 / 1024).toFixed(2)} MiB*`;
-          console.log(
-            tableRow(comparisonColumns, ["", reactLabel, reactFirstStr, reactWarmStr, reactMemStr])
-          );
-        }
-
-        const thProcesses = thymeleafRaw[scenario] || [];
-        if (thProcesses.length > 0) {
-          const thFirstMedian = summarize(thProcesses.map(p => p.initializationAndFirst.micros)).median;
-          const thWarmSamples = thProcesses.flatMap(p => p.subsequent.map(s => s.micros));
-          const thWarmMedian = summarize(thWarmSamples).median;
-          const thAllocSamples = thProcesses.flatMap(p => p.subsequent.map(s => s.allocatedBytes).filter(b => b != null));
-          const thAllocMedian = thAllocSamples.length ? summarize(thAllocSamples).median : null;
-          const thMemStr = thAllocMedian != null ? `${(thAllocMedian / 1024 / 1024).toFixed(2)} MiB` : "n/a";
-          const thFirstStr = `${(thFirstMedian / 1000).toFixed(3)} ms`;
-          const thWarmStr = `${(thWarmMedian / 1000).toFixed(3)} ms`;
-          console.log(
-            tableRow(comparisonColumns, ["", "Thymeleaf", thFirstStr, thWarmStr, thMemStr])
-          );
-        }
-
-        console.log("-".repeat(124));
-      }
-      console.log("* React allocation is a V8 sampling estimate; Compose allocation uses a JVM thread counter.");
-      const records = [...jvmSummaryRecords(jvmData), ...ssrSummaryRecords(results, reactLabel)]
-        .filter(record => commonScenarios.includes(record.scenario));
-      const summary = scenarioSummary(records, ssrMetrics);
-      console.log(summary.console);
-    }
-  } catch (error) {
-    if (!results) {
-      console.error("Failed to read latest SSR results for comparison table:", error.message);
-    }
-  }
-}
-
 if (process.argv[2] === "--worker") {
   console.log(JSON.stringify(await worker(process.argv[3])));
 } else if (printTableOnly) {
-  await printComparisonTable();
+  await printComparisonTable(null, requestedScenarios?.length ? scenarios : null);
 } else {
   const record = await createRunRecord("ssr", {
     repetitions, iterations, trials, warmups, nodeStackKiB: 8192,
@@ -195,20 +103,16 @@ if (process.argv[2] === "--worker") {
   console.log(`Scenarios: ${scenarios.join(", ")}`);
   console.log();
 
-  const raw = Object.fromEntries(scenarios.map(scenario => [scenario, []]));
-  for (let repetition = 0; repetition < repetitions; repetition++) {
-    for (const scenario of rotated(scenarios, repetition)) {
-      record.metadata.executionOrder.push({ repetition, scenario });
+  const raw = collectSsrProcesses({ scenarios, repetitions, executionOrder: record.metadata.executionOrder },
+    (scenario, repetition) => {
       process.stdout.write(`  React SSR process ${repetition + 1}/${repetitions} (${scenario})... `);
-      const result = execFileSync(process.execPath, ["--stack-size=8192", fileURLToPath(import.meta.url), "--worker", scenario], {
-        encoding: "utf8", env: { ...process.env, NODE_ENV: reactMode }, maxBuffer: 10 * 1024 * 1024,
+      const parsed = runNodeWorker(fileURLToPath(import.meta.url), ["--worker", scenario], {
+        env: { ...process.env, NODE_ENV: reactMode },
       });
-      const parsed = JSON.parse(result);
       const warmMedian = summarize(parsed.samples).median;
       console.log(`Init + first: ${parsed.initializationAndFirstMs.toFixed(3)} ms | Warm: ${warmMedian.toFixed(3)} ms | Sampled heap: ${(parsed.allocatedHeap.bytesPerRender / 1024 / 1024).toFixed(2)} MiB`);
-      raw[scenario].push({ repetition, ...parsed });
-    }
-  }
+      return parsed;
+    });
   const results = Object.fromEntries(Object.entries(raw).map(([scenario, processes]) => [scenario, {
     initializationAndFirst: summarize(processes.map(p => p.initializationAndFirstMs)),
     postWarmup: summarize(processes.flatMap(p => p.samples)),
@@ -216,32 +120,9 @@ if (process.argv[2] === "--worker") {
     perProcess: processes.map(p => ({ repetition: p.repetition, postWarmup: summarize(p.samples), allocatedHeap: p.allocatedHeap })),
     outputBytes: processes[0].outputBytes, rawProcesses: processes,
   }]));
-  const rows = Object.entries(results).map(([scenario, result]) => `| ${scenario} | ${result.initializationAndFirst.median.toFixed(3)} ms | ${result.postWarmup.median.toFixed(3)} ms | ${(result.allocatedHeap.median / 1024 / 1024).toFixed(2)} MiB |`);
-  const overall = scenarioSummary(ssrSummaryRecords(results, reactLabel), ssrMetrics);
-
-  console.log("\n" + "=".repeat(124));
-  console.log("REACT 19 SSR RESULTS");
-  console.log("=".repeat(124));
-  console.log(
-    tableRow(reactColumns, reactColumns.map(column => column.label))
-  );
-  console.log("-".repeat(124));
-  for (const [scenario, result] of Object.entries(results)) {
-    const firstStr = `${result.initializationAndFirst.median.toFixed(3)} ms`;
-    const warmStr = `${result.postWarmup.median.toFixed(3)} ms`;
-    const heapStr = `${(result.allocatedHeap.median / 1024 / 1024).toFixed(2)} MiB`;
-    console.log(
-      tableRow(reactColumns, [scenario, firstStr, warmStr, heapStr])
-    );
-  }
-  console.log("-".repeat(124));
-
-  console.log(overall.console);
-  await writeFile(resolve(record.directory, "ssr-results.json"), JSON.stringify(results, null, 2) + "\n");
-  const modeDescription = reactMode === "development"
-    ? "React development diagnostics with esbuild minification enabled"
-    : "Production React with esbuild minification enabled";
-  await writeFile(resolve(record.directory, "ssr-results.md"), `# React SSR results\n\n${modeDescription}, fixed 8 MiB Node stack and the monotonic \`performance.now()\` clock. Each workload starts in a fresh process for each of ${repetitions} repetitions. Renderer initialization + first render starts before that workload's isolated ${reactMode} server-render module is loaded and ends when its first HTML string is complete; unrelated workload modules, process startup and fixture initialization are excluded. Each process performs ${warmups} warmups and ${trials} trials of ${iterations} renders; subsequent values are trial means. First output must match Compose's DOM, attributes and text; later output must remain identical.\n\nAfter latency trials, each worker separately samples V8 JS heap allocations with a ${allocationSamplingInterval}-byte average interval. Objects collected by minor and major GC are included. The reported bytes per render divide sampled allocated bytes by the number of profiled renders; this is an estimate, unlike Compose's JVM thread allocation counter. Native allocations and retained heap are not measured. Raw profiles are not retained, but sample counts and profiled render counts are in JSON.\n\n| Scenario | Renderer initialization + first render median | Subsequent trial median | Sampled allocated heap per render |\n| :--- | ---: | ---: | ---: |\n${rows.join("\n")}\n${overall.markdown}\nBoth React and Compose construct their element and composable structures dynamically per render. Compose HTML materializes an intermediate HTML node tree and serializes it in a second pass, whereas React's renderToString writes escaped markup directly into a buffer. Depending on the selected Compose HTML version, repeated renders may reuse the composition and matching HTML nodes; the Compose JVM report records the mode used.\n\nRaw trials and per-process summaries are retained in JSON. p95 is suppressed below 20 observations.\n`);
+  await writeReactSsrReport(record.directory, results, {
+    reactMode, reactLabel, repetitions, warmups, trials, iterations, allocationSamplingInterval,
+  });
   await record.complete();
 
   if (!deferTable) {

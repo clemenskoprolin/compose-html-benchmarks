@@ -6,16 +6,8 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CHECKOUT=""
 REVISION=""
 ACTION="standard"
-ENV_FILE="${BENCHMARK_ENV_FILE:-}"
-if [[ -z "$ENV_FILE" ]]; then
-  if [[ -f "$SCRIPT_DIR/benchmarks.env" ]]; then
-    ENV_FILE="$SCRIPT_DIR/benchmarks.env"
-  elif [[ -f "$REPO_ROOT/benchmarks.env" ]]; then
-    ENV_FILE="$REPO_ROOT/benchmarks.env"
-  else
-    ENV_FILE="$SCRIPT_DIR/benchmarks.env"
-  fi
-fi
+# shellcheck source=common.sh
+source "$SCRIPT_DIR/common.sh"
 
 show_help() {
   cat << 'EOF'
@@ -64,7 +56,7 @@ Server-side rendering (SSR):
   --compose-string-rendering=MODE
                             Compose JVM renderer: keyed, unkeyed, direct, single-pass or streaming.
                             Wasm Node supports keyed and unkeyed. Default: keyed when supported.
-  --stream-chunk-size=N     Compose streaming target size in UTF-16 units (default: 4096)
+  --stream-chunk-size=N     Compose streaming target size in UTF-16 units (default: 2048)
 
 Help:
   -h, --help                Display this help message and exit
@@ -91,91 +83,24 @@ Examples:
 EOF
 }
 
-if [[ -f "$ENV_FILE" ]]; then
-  # This file is intentionally ignored by Git; see the tracked .example file.
-  # Sourced env file provides defaults without overwriting variables already set in caller environment.
-  pre_env=$(mktemp)
-  export -p > "$pre_env"
-  set -a
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
-  # shellcheck disable=SC1090
-  source "$pre_env"
-  rm -f "$pre_env"
-  set +a
-fi
+load_benchmark_env
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
-    -h|--help)
-      show_help
-      exit 0
-      ;;
-    --standard)
-      ACTION="standard"
-      shift
-      ;;
-    --ssr)
-      ACTION="ssr"
-      shift
-      ;;
-    --streaming)
-      ACTION="streaming"
-      shift
-      ;;
-    --jvm)
-      ACTION="jvm"
-      shift
-      ;;
-    --wasm)
-      ACTION="wasm"
-      shift
-      ;;
-    --hydration|--browser|--client)
-      ACTION="hydration"
-      shift
-      ;;
-    --repetitions=*) export BENCHMARK_REPETITIONS="${1#*=}"; shift ;;
-    --runs=*)
-      export BENCHMARK_RUNS="${1#*=}"
-      shift
-      ;;
-    --warmups=*)
-      export BENCHMARK_WARMUPS="${1#*=}"
-      shift
-      ;;
-    --trials=*)
-      export BENCHMARK_TRIALS="${1#*=}"
-      shift
-      ;;
-    --iterations=*)
-      export BENCHMARK_ITERATIONS="${1#*=}"
-      shift
-      ;;
-    --scenarios=*|--scenario=*)
-      export BENCHMARK_SCENARIOS="${1#*=}"
-      shift
-      ;;
-    --targets=*|--target=*)
-      export BENCHMARK_TARGETS="${1#*=}"
-      shift
-      ;;
-    --react-mode=*)
-      export BENCHMARK_REACT_MODE="${1#*=}"
-      shift
-      ;;
-    --compose-validation=*)
-      export BENCHMARK_COMPOSE_VALIDATION="${1#*=}"
-      shift
-      ;;
-    --compose-string-rendering=*)
-      export BENCHMARK_COMPOSE_STRING_RENDERING="${1#*=}"
-      shift
-      ;;
-    --stream-chunk-size=*)
-      export BENCHMARK_STREAM_CHUNK_SIZE="${1#*=}"
-      shift
-      ;;
+    -h|--help) show_help; exit 0 ;;
+    --standard|--ssr|--streaming|--jvm|--wasm) ACTION="${1#--}" ;;
+    --hydration|--browser|--client) ACTION="hydration" ;;
+    --repetitions=*) export BENCHMARK_REPETITIONS="${1#*=}" ;;
+    --runs=*) export BENCHMARK_RUNS="${1#*=}" ;;
+    --warmups=*) export BENCHMARK_WARMUPS="${1#*=}" ;;
+    --trials=*) export BENCHMARK_TRIALS="${1#*=}" ;;
+    --iterations=*) export BENCHMARK_ITERATIONS="${1#*=}" ;;
+    --scenarios=*|--scenario=*) export BENCHMARK_SCENARIOS="${1#*=}" ;;
+    --targets=*|--target=*) export BENCHMARK_TARGETS="${1#*=}" ;;
+    --react-mode=*) export BENCHMARK_REACT_MODE="${1#*=}" ;;
+    --compose-validation=*) export BENCHMARK_COMPOSE_VALIDATION="${1#*=}" ;;
+    --compose-string-rendering=*) export BENCHMARK_COMPOSE_STRING_RENDERING="${1#*=}" ;;
+    --stream-chunk-size=*) export BENCHMARK_STREAM_CHUNK_SIZE="${1#*=}" ;;
     *)
       echo "Unknown option: $1" >&2
       echo "" >&2
@@ -183,13 +108,10 @@ while [[ $# -gt 0 ]]; do
       exit 1
       ;;
   esac
+  shift
 done
 
-export BENCHMARK_REACT_MODE="${BENCHMARK_REACT_MODE:-production}"
-if [[ "$BENCHMARK_REACT_MODE" != "production" && "$BENCHMARK_REACT_MODE" != "development" ]]; then
-  echo "--react-mode must be production or development." >&2
-  exit 1
-fi
+validate_react_mode --react-mode
 
 compose_validation_setting="${BENCHMARK_COMPOSE_VALIDATION-${COMPOSE_HTML_VALIDATE_STRICTLY:-false}}"
 compose_validation_setting="${compose_validation_setting#"${compose_validation_setting%%[![:space:]]*}"}"
@@ -240,11 +162,6 @@ if [[ "$ACTION" != "jvm" && "$ACTION" != "wasm" && -n "${BENCHMARK_SCENARIOS:-}"
   done
 fi
 
-read_local_property() {
-  [[ -f "$REPO_ROOT/local.properties" ]] || return 0
-  awk -v key="$1" 'index($0, key "=") == 1 { print substr($0, length(key) + 2); exit }' \
-    "$REPO_ROOT/local.properties"
-}
 
 if [[ -z "$CHECKOUT" ]]; then CHECKOUT="${COMPOSE_HTML_CHECKOUT:-}"; fi
 if [[ -z "$CHECKOUT" ]]; then CHECKOUT="$(read_local_property compose.html.checkout)"; fi
@@ -253,15 +170,15 @@ if [[ -z "$CHECKOUT" ]]; then CHECKOUT="$REPO_ROOT/../compose-html-ssr"; fi
 DEPENDENCIES="${COMPOSE_DEPENDENCIES_PATH:-}"
 if [[ -z "$DEPENDENCIES" ]]; then DEPENDENCIES="$(read_local_property compose.dependencies.path)"; fi
 
-if [[ -n "${BENCHMARK_REPETITIONS:-}" && ! "${BENCHMARK_REPETITIONS}" =~ ^[1-9][0-9]*$ ]] || \
-   [[ -n "${BENCHMARK_RUNS:-}" && ! "${BENCHMARK_RUNS}" =~ ^[1-9][0-9]*$ ]] || \
-   [[ -n "${BENCHMARK_WARMUPS:-}" && ! "${BENCHMARK_WARMUPS}" =~ ^[0-9]+$ ]] || \
-   [[ -n "${BENCHMARK_TRIALS:-}" && ! "${BENCHMARK_TRIALS}" =~ ^[1-9][0-9]*$ ]] || \
-   [[ -n "${BENCHMARK_ITERATIONS:-}" && ! "${BENCHMARK_ITERATIONS}" =~ ^[1-9][0-9]*$ ]] || \
-   [[ -n "${BENCHMARK_STREAM_CHUNK_SIZE:-}" && ! "${BENCHMARK_STREAM_CHUNK_SIZE}" =~ ^[1-9][0-9]*$ ]]; then
-  echo "--runs, --repetitions, --trials, --iterations, and --stream-chunk-size must be at least 1; --warmups must be 0 or greater." >&2
-  exit 1
-fi
+for setting in BENCHMARK_REPETITIONS BENCHMARK_RUNS BENCHMARK_WARMUPS BENCHMARK_TRIALS BENCHMARK_ITERATIONS BENCHMARK_STREAM_CHUNK_SIZE; do
+  value="${!setting:-}"
+  pattern='^[1-9][0-9]*$'
+  if [[ "$setting" == BENCHMARK_WARMUPS ]]; then pattern='^[0-9]+$'; fi
+  if [[ -n "$value" && ! "$value" =~ $pattern ]]; then
+    echo "--runs, --repetitions, --trials, --iterations, and --stream-chunk-size must be at least 1; --warmups must be 0 or greater." >&2
+    exit 1
+  fi
+done
 
 cd "$REPO_ROOT"
 if [[ -f "$CHECKOUT/html/settings.gradle.kts" ]]; then CHECKOUT="$CHECKOUT/html"; fi
@@ -280,17 +197,7 @@ if [[ -z "$REVISION" ]]; then
 fi
 export COMPOSE_HTML_CHECKOUT="$CHECKOUT"
 export COMPOSE_DEPENDENCIES_PATH="$DEPENDENCIES"
-SELECTED_COMPOSE_VERSION="$(awk -F= '$1 == "compose.version" { print $2; exit }' "$CHECKOUT/gradle.properties")"
-if [[ -z "$SELECTED_COMPOSE_VERSION" ]]; then
-  echo "Could not determine Compose version from: $CHECKOUT/gradle.properties" >&2
-  exit 1
-fi
-GRADLE_COMPOSE_ARGS=("-Pcompose.html.checkout=$CHECKOUT"
-  "-Pcompose.version=$SELECTED_COMPOSE_VERSION"
-  -Pcompose.html.use.included.build=false
-  -Pcompose.html.eap.kotlinx-browser-common-subset.version=0.0.1-SNAPSHOT
-  -I "$SCRIPT_DIR/dependencies.init.gradle"
-  --no-configuration-cache --console=plain)
+configure_compose_gradle
 
 VERIFICATION_CHECK_ARGS=("--checkout=$CHECKOUT" "--revision=$REVISION" "--react-mode=$BENCHMARK_REACT_MODE")
 if [[ -n "$DEPENDENCIES" ]]; then
@@ -298,20 +205,19 @@ if [[ -n "$DEPENDENCIES" ]]; then
 fi
 node "$SCRIPT_DIR/verification.mjs" check "${VERIFICATION_CHECK_ARGS[@]}"
 
-
 if [[ "$ACTION" == "jvm" ]]; then
-  node "$SCRIPT_DIR/run-jvm-report.mjs" "${GRADLE_COMPOSE_ARGS[@]}" -q
+  node "$SCRIPT_DIR/run-report.mjs" jvm "${GRADLE_COMPOSE_ARGS[@]}" -q
 elif [[ "$ACTION" == "streaming" ]]; then
-  node "$SCRIPT_DIR/run-streaming-report.mjs" "${GRADLE_COMPOSE_ARGS[@]}" -q
+  node "$SCRIPT_DIR/run-report.mjs" streaming "${GRADLE_COMPOSE_ARGS[@]}" -q
 elif [[ "$ACTION" == "wasm" ]]; then
   node "$REPO_ROOT/harness/browser/wasm-ssr-comparison.mjs"
 elif [[ "$ACTION" == "ssr" ]]; then
-  node "$SCRIPT_DIR/run-jvm-report.mjs" "${GRADLE_COMPOSE_ARGS[@]}" -q
+  node "$SCRIPT_DIR/run-report.mjs" jvm "${GRADLE_COMPOSE_ARGS[@]}" -q
   node "$REPO_ROOT/harness/browser/ssr-comparison.mjs"
 elif [[ "$ACTION" == "hydration" ]]; then
   node "$REPO_ROOT/harness/browser/hydration-benchmark.mjs"
 elif [[ "$ACTION" == "standard" ]]; then
-  node "$SCRIPT_DIR/run-jvm-report.mjs" "${GRADLE_COMPOSE_ARGS[@]}" -q
+  node "$SCRIPT_DIR/run-report.mjs" jvm "${GRADLE_COMPOSE_ARGS[@]}" -q
   node "$REPO_ROOT/harness/browser/ssr-comparison.mjs" --defer-table
   node "$REPO_ROOT/harness/browser/hydration-benchmark.mjs"
   node "$REPO_ROOT/harness/browser/ssr-comparison.mjs" --print-table

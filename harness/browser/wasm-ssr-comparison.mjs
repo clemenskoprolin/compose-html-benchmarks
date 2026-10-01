@@ -1,28 +1,24 @@
 // Benchmarks Compose HTML SSR in fresh Kotlin/Wasm Node processes.
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { positiveInteger, rotated, summarize } from "./metrics.mjs";
+import { summarize } from "./metrics.mjs";
 import { createRunRecord, rootDirectory } from "./run-record.mjs";
 import { scenarioSummary } from "./benchmark-summary.mjs";
 import { ssrMetrics, ssrSummaryRecords } from "./summary-data.mjs";
+
+import { jvmScenarios, ssrSettings, runNodeWorker, collectSsrProcesses } from "./runtime.mjs";
 
 const composeMode = process.env.BENCHMARK_COMPOSE_STRING_RENDERING ?? "keyed";
 assert(["keyed", "unkeyed"].includes(composeMode), "Wasm SSR supports keyed or unkeyed string rendering");
 const executable = resolve(rootDirectory,
   "implementations/compose/wasm-ssr/build/compileSync/wasmJs/main/productionExecutable/optimized/compose-html-benchmarks-implementations-compose-wasm-ssr.mjs");
-const allScenarios = ["tailwind-catalog", "form-app", "data-table", "svg-dashboard", "content-article",
-  "preact-text", "preact-search-results", "preact-stack", "raw-text-style", "raw-text-elements",
-  "style-heavy-catalog"];
+const allScenarios = jvmScenarios;
 const requested = process.env.BENCHMARK_SCENARIOS?.split(",").map(s => s.trim()).filter(Boolean);
 const scenarios = requested?.length ? allScenarios.filter(s => requested.includes(s)) : allScenarios;
 assert(scenarios.length > 0, "No known Wasm SSR scenarios selected");
 if (requested) for (const name of requested) assert(allScenarios.includes(name), `Unknown Wasm SSR scenario: ${name}`);
-const repetitions = positiveInteger(process.env.BENCHMARK_REPETITIONS ?? 3, "BENCHMARK_REPETITIONS");
-const warmups = positiveInteger(process.env.BENCHMARK_WARMUPS ?? 3, "BENCHMARK_WARMUPS", 0);
-const trials = positiveInteger(process.env.BENCHMARK_TRIALS ?? 15, "BENCHMARK_TRIALS");
-const iterations = positiveInteger(process.env.BENCHMARK_ITERATIONS ?? 100, "BENCHMARK_ITERATIONS");
+const { repetitions, warmups, trials, iterations } = ssrSettings();
 
 const record = await createRunRecord("wasm-ssr", {
   repetitions, warmups, trials, iterations, nodeStackKiB: 8192,
@@ -35,23 +31,18 @@ console.log("=".repeat(108));
 console.log(`Settings: ${repetitions} fresh Node processes per workload; ${warmups} warmups, ${trials} trials of ${iterations} renders; ${composeMode} rendering`);
 console.log(`Scenarios: ${scenarios.join(", ")}`);
 
-const raw = Object.fromEntries(scenarios.map(name => [name, []]));
-for (let repetition = 0; repetition < repetitions; repetition++) {
-  for (const scenario of rotated(scenarios, repetition)) {
-    record.metadata.executionOrder.push({ repetition, scenario });
+const raw = collectSsrProcesses({ scenarios, repetitions, executionOrder: record.metadata.executionOrder },
+  (scenario, repetition) => {
     process.stdout.write(`  Wasm process ${repetition + 1}/${repetitions} (${scenario})... `);
-    const output = execFileSync(process.execPath,
-      ["--stack-size=8192", executable, scenario, String(warmups), String(trials), String(iterations)],
-      { encoding: "utf8", cwd: rootDirectory, maxBuffer: 10 * 1024 * 1024 });
-    const parsed = JSON.parse(output);
+    const parsed = runNodeWorker(executable, [scenario, String(warmups), String(trials), String(iterations)],
+      { cwd: rootDirectory });
     assert.equal(parsed.scenario, scenario);
     assert.equal(parsed.samples.length, trials);
     assert(Number.isFinite(parsed.initializationAndFirstMs));
     assert(parsed.samples.every(Number.isFinite));
     console.log(`Init + first: ${parsed.initializationAndFirstMs.toFixed(3)} ms | Warm: ${summarize(parsed.samples).median.toFixed(3)} ms`);
-    raw[scenario].push({ repetition, ...parsed });
-  }
-}
+    return parsed;
+  });
 const results = Object.fromEntries(Object.entries(raw).map(([scenario, processes]) => [scenario, {
   initializationAndFirst: summarize(processes.map(p => p.initializationAndFirstMs)),
   postWarmup: summarize(processes.flatMap(p => p.samples)),

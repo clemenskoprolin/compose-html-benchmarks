@@ -1,14 +1,14 @@
 // Standalone JVM HTTP server for serving Compose SSR responses during local previewing.
 package benchmarks.server
 
-import benchmarks.compose.*
-import benchmarks.model.*
+import benchmarks.analysis.composeWorkload
+import benchmarks.analysis.documentWorkloads
+import benchmarks.analysis.workloadFixture
 import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import java.io.File
-import java.io.OutputStream
 import java.net.InetSocketAddress
 import java.util.concurrent.Executors
 
@@ -23,13 +23,7 @@ class BenchmarkServer(private val port: Int) {
     private val mapper = ObjectMapper().registerKotlinModule()
     private var httpServer: HttpServer? = null
 
-    private val fixtures = mapOf(
-        "tailwind-catalog" to catalogFixture(),
-        "form-app" to formFixture(),
-        "data-table" to dataTableFixture(),
-        "svg-dashboard" to svgDashboardFixture(),
-        "content-article" to articleFixture()
-    )
+    private val fixtures = documentWorkloads.associateWith(::workloadFixture)
 
     fun start() {
         val server = HttpServer.create(InetSocketAddress("127.0.0.1", port), 0)
@@ -90,14 +84,9 @@ class BenchmarkServer(private val port: Int) {
     }
 
     private fun renderComposeScenario(scenario: String): String? {
-        val (renderedHtml, stateData) = when (scenario) {
-            "tailwind-catalog" -> renderTailwindCatalog(catalogFixture()) to catalogFixture()
-            "form-app" -> renderFormApp(formFixture()) to formFixture()
-            "data-table" -> renderDataTable(dataTableFixture()) to dataTableFixture()
-            "svg-dashboard" -> renderSvgDashboard(svgDashboardFixture()) to svgDashboardFixture()
-            "content-article" -> renderContentArticle(articleFixture()) to articleFixture()
-            else -> return null
-        }
+        if (scenario !in documentWorkloads) return null
+        val renderedHtml = composeWorkload(scenario, workloadFixture(scenario))()
+        val stateData = workloadFixture(scenario)
 
         val jsonState = mapper.writeValueAsString(stateData)
             .replace("<", "\\u003c")

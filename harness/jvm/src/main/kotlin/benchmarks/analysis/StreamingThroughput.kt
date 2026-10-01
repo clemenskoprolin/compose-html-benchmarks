@@ -40,7 +40,7 @@ fun main(args: Array<String>) {
     val stress = name in setOf("stream-pre", "stream-textarea")
     val scenario = if (stress) null else JvmSsrScenario.entries.single { it.argument == name }
     val fixture = if (stress) null else workloadFixture(name)
-    val chunkSize = System.getenv("BENCHMARK_STREAM_CHUNK_SIZE")?.toInt() ?: 4096
+    val chunkSize = System.getenv("BENCHMARK_STREAM_CHUNK_SIZE")?.toInt() ?: 2048
     val warmups = System.getenv("BENCHMARK_WARMUPS")?.toInt() ?: 200
     val trials = System.getenv("BENCHMARK_TRIALS")?.toInt() ?: 15
     val iterations = System.getenv("BENCHMARK_ITERATIONS")?.toInt() ?: 100

@@ -121,5 +121,18 @@ tools/             Build, selection and benchmark orchestration
 results/           Run archives and result documentation
 ```
 
+The harness runners collect measurements and generate reports afterward.
+They use the following shared components:
+
+| File | Responsibility |
+| --- | --- |
+| `harness/browser/runtime.mjs` | Workload groups, environment defaults, settings and fresh Node worker ordering |
+| `harness/browser/*-report.mjs` | Result aggregation and console/Markdown/JSON presentation |
+| `harness/browser/run-record.mjs` | Provenance and completed-run archives |
+| `SsrWorkloads.kt` (JVM analysis) | JVM scenarios, fixtures and renderers shared by measurement, export, preview and analysis |
+| `BenchmarkSupport.kt` (JVM analysis) | Settings, statistics, allocation counters and fresh JVM workers |
+| `tools/common.sh` | Environment precedence, local selection and Gradle arguments |
+| `tools/run-report.mjs` | JVM and combined streaming report coordination |
+
 Third-party attributions are listed in
 [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md).

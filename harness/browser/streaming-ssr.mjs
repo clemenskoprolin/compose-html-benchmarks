@@ -1,19 +1,18 @@
 // Measures React's pipeable SSR stream against the same fixtures as JVM streaming.
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { readFile, writeFile, unlink } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { Writable } from "node:stream";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertEquivalent } from "./html-equivalence.mjs";
-import { positiveInteger, summarize } from "./metrics.mjs";
-import { ensureSsrRuntime } from "./runtime.mjs";
+import { summarize } from "./metrics.mjs";
+import { ensureSsrRuntime, benchmarkCount as setting, runNodeFileWorker } from "./runtime.mjs";
 import { contentByteOffset, StreamingCounter, streamingMilestones } from "./streaming-milestones.mjs";
 import { rootDirectory } from "./run-record.mjs";
 
+
 ensureSsrRuntime();
 const allScenarios = Object.keys(streamingMilestones);
-const setting = (name, fallback, minimum = 1) => positiveInteger(process.env[name] ?? fallback, name, minimum);
 
 async function renderStream(renderScenario, data, contentBytes = null, collect = false) {
   const start = performance.now();
@@ -104,10 +103,8 @@ if (process.argv[2] === "--worker") {
     const runs = [];
     for (let repetition = 0; repetition < repetitions; repetition++) {
       const output = resolve(directory, `react-stream-${scenario}-${repetition}.worker.json`);
-      execFileSync(process.execPath, ["--stack-size=8192", fileURLToPath(import.meta.url), "--worker", scenario, output],
-        { cwd: rootDirectory, stdio: "inherit", env: process.env });
-      runs.push(JSON.parse(await readFile(output)));
-      await unlink(output);
+      runs.push(await runNodeFileWorker(fileURLToPath(import.meta.url), ["--worker", scenario], output,
+        { cwd: rootDirectory, env: process.env }));
     }
     results[scenario] = runs;
     const samples = runs.flatMap(run => run.samples);

@@ -11,16 +11,8 @@ STATUS=0
 SELECTING_CHECKOUT=0
 SELECTING_DEPENDENCIES=0
 CLEARING_DEPENDENCIES=0
-ENV_FILE="${BENCHMARK_ENV_FILE:-}"
-if [[ -z "$ENV_FILE" ]]; then
-  if [[ -f "$SCRIPT_DIR/benchmarks.env" ]]; then
-    ENV_FILE="$SCRIPT_DIR/benchmarks.env"
-  elif [[ -f "$REPO_ROOT/benchmarks.env" ]]; then
-    ENV_FILE="$REPO_ROOT/benchmarks.env"
-  else
-    ENV_FILE="$SCRIPT_DIR/benchmarks.env"
-  fi
-fi
+# shellcheck source=common.sh
+source "$SCRIPT_DIR/common.sh"
 
 show_help() {
   cat << 'EOF'
@@ -49,29 +41,11 @@ Options:
 EOF
 }
 
-if [[ -f "$ENV_FILE" ]]; then
-  pre_env=$(mktemp)
-  export -p > "$pre_env"
-  set -a
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
-  # shellcheck disable=SC1090
-  source "$pre_env"
-  rm -f "$pre_env"
-  set +a
-fi
+load_benchmark_env
 
-export BENCHMARK_REACT_MODE="${BENCHMARK_REACT_MODE:-production}"
-if [[ "$BENCHMARK_REACT_MODE" != "production" && "$BENCHMARK_REACT_MODE" != "development" ]]; then
-  echo "BENCHMARK_REACT_MODE must be production or development." >&2
-  exit 1
-fi
+validate_react_mode BENCHMARK_REACT_MODE
 
-read_local_property() {
-  [[ -f "$REPO_ROOT/local.properties" ]] || return 0
-  awk -v key="$1" 'index($0, key "=") == 1 { print substr($0, length(key) + 2); exit }' \
-    "$REPO_ROOT/local.properties"
-}
+
 
 show_status() {
   local cur_checkout="${COMPOSE_HTML_CHECKOUT:-}"
@@ -272,20 +246,10 @@ echo "Preparing Compose SSR and browser hydration artifacts..."
 cd "$REPO_ROOT"
 export COMPOSE_HTML_CHECKOUT="$CHECKOUT"
 export COMPOSE_DEPENDENCIES_PATH="$DEPENDENCIES"
-SELECTED_COMPOSE_VERSION="$(awk -F= '$1 == "compose.version" { print $2; exit }' "$CHECKOUT/gradle.properties")"
-if [[ -z "$SELECTED_COMPOSE_VERSION" ]]; then
-  echo "Could not determine Compose version from: $CHECKOUT/gradle.properties" >&2
-  exit 1
-fi
-GRADLE_COMPOSE_ARGS=("-Pcompose.html.checkout=$CHECKOUT"
-  "-Pcompose.version=$SELECTED_COMPOSE_VERSION"
-  -Pcompose.html.use.included.build=false
-  -Pcompose.html.eap.kotlinx-browser-common-subset.version=0.0.1-SNAPSHOT
-  -I "$SCRIPT_DIR/dependencies.init.gradle"
-  --no-configuration-cache --console=plain)
+configure_compose_gradle
 ALL_SCENARIOS=(tailwind-catalog form-app data-table svg-dashboard content-article hydrate1k update10th1k reorder1k filter-list)
 
-node tools/check-dependencies.mjs
+node tools/verification.mjs dependencies
 
 # Build external sources once, then use exactly those local artifacts everywhere.
 REFRESH_LOG="$(mktemp)"

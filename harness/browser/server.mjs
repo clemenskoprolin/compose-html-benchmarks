@@ -4,6 +4,7 @@ import { createReadStream } from "node:fs";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { fileURLToPath } from "node:url";
+import { documentScenarios as documents, browserScenarios } from "./runtime.mjs";
 
 const port = Number(process.env.BENCHMARK_PORT || 4173);
 const repositoryRoot = new URL("../../", import.meta.url);
@@ -11,8 +12,8 @@ const reactDistribution = new URL("build/web/react/dist/", repositoryRoot);
 const staticDirectory = new URL("build/web/static/", repositoryRoot);
 const manifest = JSON.parse(await readFile(new URL("asset-manifest.json", reactDistribution), "utf8"));
 
-const documentScenarios = new Set(["tailwind-catalog", "form-app", "data-table", "svg-dashboard", "content-article"]);
-const composeClientScenarios = new Set([...documentScenarios, "hydrate1k", "update10th1k", "reorder1k", "filter-list"]);
+const documentScenarios = new Set(documents);
+const composeClientScenarios = new Set(browserScenarios);
 const composeWasmUrls = new Map();
 
 let hydrate1kWasmUrl = "";
@@ -155,6 +156,15 @@ async function sendStatic(request, response, sourceUrl, contentType) {
   createReadStream(selectedPath).pipe(response);
 }
 
+const pageRoutes = [
+  { prefix: "/react/", label: "React", renderer: "react", stack: true },
+  { prefix: "/thymeleaf/", label: "Thymeleaf", renderer: "thymeleaf", exportHint: true },
+  { prefix: "/compose-wasm/", label: "Compose Wasm", target: "wasm", exportHint: true },
+  { prefix: "/compose-js/", label: "Compose JS", target: "js", exportHint: true },
+  { prefix: "/compose-wasm-table-unchecked/", label: "table-unchecked Compose Wasm", target: "wasm", unchecked: true },
+  { prefix: "/compose-js-table-unchecked/", label: "table-unchecked Compose JS", target: "js", unchecked: true },
+];
+
 export function createBenchmarkServer() {
   const server = createServer(async (request, response) => {
     response.setHeader("Cross-Origin-Opener-Policy", "same-origin");
@@ -212,151 +222,33 @@ export function createBenchmarkServer() {
       return;
     }
 
-    // React scenario endpoints: /react/:scenario
-    if (pathname.startsWith("/react/")) {
-      const scenario = pathname.replace("/react/", "");
-      const data = fixtures[scenario] || {};
+    const route = pageRoutes.find(route => pathname.startsWith(route.prefix));
+    if (route) {
+      const scenario = pathname.replace(route.prefix, "");
       try {
-        const bodyHtml = await readFile(new URL(`build/react-html/${scenario}.body.html`, repositoryRoot), "utf8");
-        const fullHtml = renderReactDocument({
-          scenario,
-          bodyHtml,
-          data,
-          scriptUrl: manifest.reactHydrated[scenario],
-        });
-        response.writeHead(200, {
-          "Content-Type": "text/html; charset=UTF-8",
-          "Cache-Control": "no-store",
-        });
-        response.end(fullHtml);
-        return;
-      } catch (err) {
-        response.writeHead(500, { "Content-Type": "text/plain" });
-        response.end(`Error rendering React scenario: ${err.message}\n${err.stack}`);
-        return;
-      }
-    }
-
-    // Thymeleaf scenario endpoints: /thymeleaf/:scenario
-    if (pathname.startsWith("/thymeleaf/")) {
-      const scenario = pathname.replace("/thymeleaf/", "");
-      try {
-        const html = await readFile(new URL(`build/ssr-html/${scenario}.thymeleaf.html`, repositoryRoot), "utf8");
-        response.writeHead(200, {
-          "Content-Type": "text/html; charset=UTF-8",
-          "Cache-Control": "no-store",
-        });
+        let html;
+        if (route.renderer === "thymeleaf") {
+          html = await readFile(new URL(`build/ssr-html/${scenario}.thymeleaf.html`, repositoryRoot), "utf8");
+        } else {
+          const file = route.renderer === "react"
+            ? `build/react-html/${scenario}.body.html`
+            : `build/ssr-html/${scenario}${documentScenarios.has(scenario) ? ".body" : ""}.html`;
+          const bodyHtml = await readFile(new URL(file, repositoryRoot), "utf8");
+          const data = fixtures[scenario] || {};
+          html = route.renderer === "react"
+            ? renderReactDocument({ scenario, bodyHtml, data, scriptUrl: manifest.reactHydrated[scenario] })
+            : renderComposeDocument({ scenario, bodyHtml, data, target: route.target,
+                assetScenario: route.unchecked ? `${scenario}-table-unchecked` : scenario });
+        }
+        response.writeHead(200, { "Content-Type": "text/html; charset=UTF-8", "Cache-Control": "no-store" });
         response.end(html);
-        return;
-      } catch (err) {
+      } catch (error) {
+        const detail = route.stack ? `\n${error.stack}`
+          : route.exportHint ? "\nRun ./gradlew exportSsrHtml first." : "";
         response.writeHead(500, { "Content-Type": "text/plain" });
-        response.end(`Error rendering Thymeleaf scenario: ${err.message}\nRun ./gradlew exportSsrHtml first.`);
-        return;
+        response.end(`Error rendering ${route.label} scenario: ${error.message}${detail}`);
       }
-    }
-
-    // Compose Wasm scenario endpoints: /compose-wasm/:scenario
-    if (pathname.startsWith("/compose-wasm/")) {
-      const scenario = pathname.replace("/compose-wasm/", "");
-      const data = fixtures[scenario] || {};
-      try {
-        const ssrFile = new URL(`build/ssr-html/${scenario}${documentScenarios.has(scenario) ? ".body" : ""}.html`, repositoryRoot);
-        const bodyHtml = await readFile(ssrFile, "utf8");
-        const fullHtml = renderComposeDocument({
-          scenario,
-          bodyHtml,
-          data,
-          target: "wasm",
-        });
-        response.writeHead(200, {
-          "Content-Type": "text/html; charset=UTF-8",
-          "Cache-Control": "no-store",
-        });
-        response.end(fullHtml);
-        return;
-      } catch (err) {
-        response.writeHead(500, { "Content-Type": "text/plain" });
-        response.end(`Error rendering Compose Wasm scenario: ${err.message}\nRun ./gradlew exportSsrHtml first.`);
-        return;
-      }
-    }
-
-    // Compose JS scenario endpoints: /compose-js/:scenario
-    if (pathname.startsWith("/compose-js/")) {
-      const scenario = pathname.replace("/compose-js/", "");
-      const data = fixtures[scenario] || {};
-      try {
-        const ssrFile = new URL(`build/ssr-html/${scenario}${documentScenarios.has(scenario) ? ".body" : ""}.html`, repositoryRoot);
-        const bodyHtml = await readFile(ssrFile, "utf8");
-        const fullHtml = renderComposeDocument({
-          scenario,
-          bodyHtml,
-          data,
-          target: "js",
-        });
-        response.writeHead(200, {
-          "Content-Type": "text/html; charset=UTF-8",
-          "Cache-Control": "no-store",
-        });
-        response.end(fullHtml);
-        return;
-      } catch (err) {
-        response.writeHead(500, { "Content-Type": "text/plain" });
-        response.end(`Error rendering Compose JS scenario: ${err.message}\nRun ./gradlew exportSsrHtml first.`);
-        return;
-      }
-    }
-
-    if (pathname.startsWith("/compose-wasm-table-unchecked/")) {
-      const scenario = pathname.replace("/compose-wasm-table-unchecked/", "");
-      const data = fixtures[scenario] || {};
-      try {
-        const ssrFile = new URL(`build/ssr-html/${scenario}${documentScenarios.has(scenario) ? ".body" : ""}.html`, repositoryRoot);
-        const bodyHtml = await readFile(ssrFile, "utf8");
-        const fullHtml = renderComposeDocument({
-          scenario,
-          bodyHtml,
-          data,
-          target: "wasm",
-          assetScenario: `${scenario}-table-unchecked`,
-        });
-        response.writeHead(200, {
-          "Content-Type": "text/html; charset=UTF-8",
-          "Cache-Control": "no-store",
-        });
-        response.end(fullHtml);
-        return;
-      } catch (err) {
-        response.writeHead(500, { "Content-Type": "text/plain" });
-        response.end(`Error rendering table-unchecked Compose Wasm scenario: ${err.message}`);
-        return;
-      }
-    }
-
-    if (pathname.startsWith("/compose-js-table-unchecked/")) {
-      const scenario = pathname.replace("/compose-js-table-unchecked/", "");
-      const data = fixtures[scenario] || {};
-      try {
-        const ssrFile = new URL(`build/ssr-html/${scenario}${documentScenarios.has(scenario) ? ".body" : ""}.html`, repositoryRoot);
-        const bodyHtml = await readFile(ssrFile, "utf8");
-        const fullHtml = renderComposeDocument({
-          scenario,
-          bodyHtml,
-          data,
-          target: "js",
-          assetScenario: `${scenario}-table-unchecked`,
-        });
-        response.writeHead(200, {
-          "Content-Type": "text/html; charset=UTF-8",
-          "Cache-Control": "no-store",
-        });
-        response.end(fullHtml);
-        return;
-      } catch (err) {
-        response.writeHead(500, { "Content-Type": "text/plain" });
-        response.end(`Error rendering table-unchecked Compose JS scenario: ${err.message}`);
-        return;
-      }
+      return;
     }
 
     // Fixture API

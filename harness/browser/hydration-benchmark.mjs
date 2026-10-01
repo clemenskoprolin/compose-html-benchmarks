@@ -2,29 +2,23 @@
 // It measures readiness, interactions, transfer, memory, and SSR-node adoption with Playwright.
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
-import { writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
-import { chromium } from "@playwright/test";
-import { summarize, startupMetrics, positiveInteger, rotated } from "./metrics.mjs";
-import { createRunRecord } from "./run-record.mjs";
-import { assertEquivalent } from "./html-equivalence.mjs";
 import { readFile } from "node:fs/promises";
+import { resolve } from "node:path";
+import { chromium } from "@playwright/test";
+import { startupMetrics, rotated } from "./metrics.mjs";
+import { createRunRecord, rootDirectory } from "./run-record.mjs";
+import { assertEquivalent } from "./html-equivalence.mjs";
 import { interactionInPage } from "./interaction.mjs";
-import { loadBenchmarkEnv, reactRuntimeMode } from "./runtime.mjs";
-import { scenarioSummary } from "./benchmark-summary.mjs";
-import { browserMetrics, paintMetrics, browserSummaryRecords } from "./summary-data.mjs";
+import { loadBenchmarkEnv, reactRuntimeMode, benchmarkCount, browserScenarios } from "./runtime.mjs";
+import { summarizeBrowserResults, writeBrowserReport } from "./browser-report.mjs";
 
 loadBenchmarkEnv();
 const reactMode = reactRuntimeMode();
 
-const benchmarkDirectory = dirname(fileURLToPath(import.meta.url));
-const rootDirectory = resolve(benchmarkDirectory, "../..");
-
-
-const runs = positiveInteger(process.env.BENCHMARK_RUNS ?? 3, "BENCHMARK_RUNS");
-const repetitions = positiveInteger(process.env.BENCHMARK_REPETITIONS ?? 3, "BENCHMARK_REPETITIONS");
-const warmups = positiveInteger(process.env.BENCHMARK_WARMUPS ?? 1, "BENCHMARK_WARMUPS", 0);
+const benchmarkDirectory = resolve(rootDirectory, "harness/browser");
+const runs = benchmarkCount("BENCHMARK_RUNS", 3);
+const repetitions = benchmarkCount("BENCHMARK_REPETITIONS", 3);
+const warmups = benchmarkCount("BENCHMARK_WARMUPS", 1, 0);
 const serverPort = process.env.BENCHMARK_PORT || "4173";
 const browserChannel = process.env.BENCHMARK_BROWSER_CHANNEL || "chrome";
 const measureMemory = process.env.BENCHMARK_MEMORY !== "false";
@@ -42,7 +36,7 @@ const profile = {
   uploadMbps: Number(process.env.BENCHMARK_UPLOAD_MBPS || 5),
 };
 
-const scenarios = (process.env.BENCHMARK_SCENARIOS || "tailwind-catalog,form-app,data-table,svg-dashboard,content-article,hydrate1k,update10th1k,reorder1k,filter-list").split(",");
+const scenarios = (process.env.BENCHMARK_SCENARIOS || browserScenarios.join(",")).split(",");
 const targets = (process.env.BENCHMARK_TARGETS || "react,compose-wasm,compose-js").split(",");
 
 const targetLabels = {
@@ -334,125 +328,10 @@ async function run() {
         }
       }
     }
-    const allResults = {};
-    for (const [scenario, byTarget] of Object.entries(observations)) {
-      allResults[scenario] = {};
-      for (const [target, { firstLoads, samples }] of Object.entries(byTarget)) {
-        const firstMedian = (field) => summarize(firstLoads.map(sample => sample[field])).median;
-        const cold = Object.fromEntries(Object.keys(firstLoads[0]).map(key => [key,
-          firstLoads.some(sample => typeof sample[key] === "number") ? firstMedian(key) : firstLoads[0][key],
-        ]));
-        allResults[scenario][target] = {
-          rawSamples: { firstLoads, subsequentLoads: samples },
-          coldStart: {
-            ttfbMs: cold.ttfbMs,
-            fcpMs: cold.fcpMs,
-            navigationReadyMs: cold.navigationReadyMs,
-            postTtfbReadyMs: cold.postTtfbReadyMs,
-            startupDurationMs: cold.hydrationDurationMs,
-          },
-          postWarmup: {
-            ttfb: summarize(samples.map((sample) => sample.ttfbMs)),
-            fcp: summarize(samples.map((sample) => sample.fcpMs)),
-            navigationReady: summarize(samples.map((sample) => sample.navigationReadyMs)),
-            postTtfbReady: summarize(samples.map((sample) => sample.postTtfbReadyMs)),
-            startupDuration: summarize(samples.map((sample) => sample.hydrationDurationMs).filter((value) => value != null)),
-          },
-          interaction: interactionScenarios[scenario] ? {
-            cold: summarize(samples.map((sample) => sample.coldInteractionDurationMs)),
-            postWarmup: summarize(samples.map((sample) => sample.warmInteractionDurationMs)),
-          } : null,
-          memory: measureMemory ? {
-            cold: {
-              userAgentMiB: cold.userAgentMemoryBytes == null ? null : cold.userAgentMemoryBytes / 1024 / 1024,
-              jsHeapMiB: cold.jsHeapUsedBytes / 1024 / 1024,
-            },
-            postWarmup: {
-              userAgentMiB: summarize(samples.map((sample) => sample.userAgentMemoryBytes).filter((value) => value != null).map((value) => value / 1024 / 1024)),
-              jsHeapMiB: summarize(samples.map((sample) => sample.jsHeapUsedBytes).filter((value) => value != null).map((value) => value / 1024 / 1024)),
-            },
-          } : null,
-          scriptTransfer: summarize(samples.map((sample) => sample.scriptTransferBytes / 1024)),
-          scriptDecoded: summarize(samples.map((sample) => sample.scriptDecodedBytes / 1024)),
-          domElements: samples[0]?.domElementCount ?? cold.domElementCount,
-        };
-      }
-    }
-
-    console.log("\n" + "=".repeat(124));
-    console.log("FIRST AND SUBSEQUENT LOAD RESULTS");
-    console.log("=".repeat(124));
-    console.log(
-      `${"Scenario".padEnd(20)} ${"Target".padEnd(20)} ${"First ready".padStart(12)} ${"Later ready".padStart(12)} ${"First action".padStart(13)} ${"Warm action".padStart(13)} ${"RAM warm".padStart(11)} ${"JS heap".padStart(10)}`,
-    );
-    console.log("-".repeat(124));
-
-    const markdownRows = [];
-    const paintRows = [];
-    for (const scenario of scenarios) {
-      for (const target of targets) {
-        const result = allResults[scenario]?.[target];
-        if (!result) continue;
-        const label = targetLabels[target] || target;
-        const coldReady = `${result.coldStart.postTtfbReadyMs.toFixed(1)} ms`;
-        const warmReady = `${result.postWarmup.postTtfbReady.median.toFixed(1)} ms`;
-        const coldAction = result.interaction ? `${result.interaction.cold.median.toFixed(2)} ms` : "—";
-        const warmAction = result.interaction ? `${result.interaction.postWarmup.median.toFixed(2)} ms` : "—";
-        const formatMs = (value) => value == null ? "n/a" : `${value.toFixed(1)} ms`;
-        paintRows.push(`| ${scenario} | ${label} | ${formatMs(result.coldStart.fcpMs)} | ${formatMs(result.postWarmup.fcp.median)} | ${formatMs(result.postWarmup.ttfb.median)} | ${formatMs(result.coldStart.navigationReadyMs)} | ${formatMs(result.postWarmup.navigationReady.median)} |`);
-        const payload = `${result.scriptTransfer.median.toFixed(1)} KiB`;
-        const userAgentMemory = result.memory?.postWarmup.userAgentMiB.n
-          ? `${result.memory.cold.userAgentMiB?.toFixed(1) ?? "n/a"} → ${result.memory.postWarmup.userAgentMiB.median.toFixed(1)} MiB`
-          : "n/a";
-        const jsHeap = result.memory
-          ? `${result.memory.cold.jsHeapMiB.toFixed(1)} → ${result.memory.postWarmup.jsHeapMiB.median.toFixed(1)} MiB`
-          : "n/a";
-        markdownRows.push(`| ${scenario} | ${label} | ${coldReady} | ${warmReady} | ${coldAction} | ${warmAction} | ${userAgentMemory} | ${jsHeap} | ${payload} | ${result.domElements} |`);
-        console.log(
-          `${scenario.padEnd(20)} ${label.padEnd(20)} ${coldReady.padStart(12)} ${warmReady.padStart(12)} ${coldAction.padStart(13)} ${warmAction.padStart(13)} ${(result.memory?.postWarmup.userAgentMiB.n ? `${result.memory.postWarmup.userAgentMiB.median.toFixed(1)} MiB` : "n/a").padStart(11)} ${(result.memory ? `${result.memory.postWarmup.jsHeapMiB.median.toFixed(1)} MiB` : "n/a").padStart(10)}`,
-        );
-      }
-      console.log("-".repeat(124));
-    }
-
-    const summaryRecords = browserSummaryRecords(allResults, targetLabels);
-    const overall = scenarioSummary(summaryRecords, browserMetrics);
-    const paintOverall = scenarioSummary(summaryRecords, paintMetrics);
-    const consoleOverall = scenarioSummary(summaryRecords,
-      browserMetrics.filter(metric => ["firstReady", "laterReady", "firstAction", "warmAction", "laterRam", "laterHeap"].includes(metric.key)));
-    console.log(consoleOverall.console);
-
-    const interactionVerification = scenarios.some((scenario) => interactionScenarios[scenario])
-      ? `\n- **Interaction protocol**: Measure the first operation, perform ${warmups} warmup operations, then measure the subsequent operation. Filter resets to 1,000 items when necessary so both measured operations remove items 20–600.`
-      : "";
-    const report = `# Client benchmark: Compose HTML vs React 19
-
-Automated with Playwright and Chrome DevTools Protocol.
-
-- **CPU throttling**: ${profile.cpuThrottle}× slowdown
-- **Network**: ${profile.latencyMs} ms CDP latency, ${profile.downloadMbps} Mbps download, ${profile.uploadMbps} Mbps upload
-- **Cache**: Disabled for every page load
-- **Startup protocol**: ${repetitions} independent browser processes, rotating target/scenario order. Per target per process: one first load, ${warmups} discarded loads, then ${runs} subsequent loads; every load uses a fresh context. First-load columns aggregate the per-process first loads; they do not measure browser launch or an isolated cold OS cache.
-- **Reported aggregate**: Median of post-warmup samples${interactionVerification}
-- **Memory**: User-agent-specific application memory plus CDP JS heap, collected after timing and reported first → subsequent. When enabled, Chrome's eager measurement mode forces the API's garbage collection immediately instead of waiting for its fallback timeout.
-- **Scope**: All nine browser scenarios use matched fixture data and markup. Compose uses production bundles; React uses a minified ${reactMode} runtime bundle. Both targets serve pre-exported HTML.
-- **DOM verification**: SSR node adoption and workload result assertions run for every sample
-
-| Scenario | Target | First-load TTFB → Ready | Subsequent TTFB → Ready | First interaction | Post-warmup interaction | App RAM first → subsequent | JS heap first → subsequent | Script transfer | DOM elements |
-| :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-${markdownRows.join("\n")}${overall.markdown}
-
-| Scenario | Target | First-load FCP | Subsequent FCP | Subsequent TTFB | First-load navigation → Ready | Subsequent navigation → Ready |
-| :--- | :--- | ---: | ---: | ---: | ---: | ---: |
-${paintRows.join("\n")}${paintOverall.markdown}
-
-FCP is first contentful paint, measured from navigation start. It can precede hydration because SSR HTML is already visible. Ready is the application's post-commit app-ready mark, not a browser paint metric. TTFB → Ready subtracts navigation responseStart; navigation → Ready includes it. Both frameworks serve pre-exported HTML from the same server. TTFB remains diagnostic, not an SSR speed comparison. CDP latency models browser resource delivery; navigation responseStart can precede the artificial delay.
-
-Startup duration in JSON runs from the framework start mark to app-ready (React uses a layout effect after commit; both include fixture decoding). Interaction durations include DOM completion and two animation frames; they are a rendering opportunity proxy, not pure framework execution time or a guaranteed display timestamp. Script transfer includes Resource Timing's estimated response headers and JS/Wasm bodies, not just Brotli body bytes. Memory is sampled after interactions/deletion, on the first and last measured loads of each browser process; unavailable values are null. Raw first/subsequent samples are retained in JSON with process indices. p95 is null for fewer than 20 observations. Settings, runtime versions and bundle hashes are archived beside the results. The legacy coldStart/postWarmup JSON keys refer to first/subsequent fresh-context loads.
-`;
-
-    await writeFile(resolve(resultsDirectory, "hydration-results.md"), report);
-    await writeFile(resolve(resultsDirectory, "hydration-results.json"), `${JSON.stringify(allResults, null, 2)}\n`);
+    const allResults = summarizeBrowserResults(observations, { measureMemory, interactionScenarios });
+    await writeBrowserReport(resultsDirectory, allResults, {
+      scenarios, targets, targetLabels, interactionScenarios, profile, repetitions, warmups, runs, reactMode,
+    });
     await record.complete();
   } finally {
     if (browser) await browser.close();

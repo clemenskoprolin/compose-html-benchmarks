@@ -5,11 +5,10 @@ import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { gitState, hash, rootDirectory } from "../harness/browser/run-record.mjs";
 
+import { browserScenarios, ssrScenarios, jvmScenarios } from "../harness/browser/runtime.mjs";
+
 const stampPath = resolve(rootDirectory, "build/verification.json");
-const scenarios = ["tailwind-catalog", "form-app", "data-table", "svg-dashboard", "content-article",
-  "hydrate1k", "update10th1k", "reorder1k", "filter-list"];
-const ssrScenarios = ["tailwind-catalog", "form-app", "data-table", "svg-dashboard", "content-article",
-  "preact-text", "preact-search-results", "preact-stack"];
+const scenarios = browserScenarios;
 const requiredArtifacts = [
   "build/compose-provenance.json",
   "implementations/compose/wasm-ssr/build/compileSync/wasmJs/main/productionExecutable/optimized/compose-html-benchmarks-implementations-compose-wasm-ssr.mjs",
@@ -18,9 +17,7 @@ const requiredArtifacts = [
   ...ssrScenarios.map(scenario =>
     `build/web/react/dist/server-stream-${scenario}.mjs`),
   "workloads/jvm/src/main/resources/fixtures.json",
-  ...scenarios.map(scenario => `build/ssr-html/${scenario}.html`),
-  ...["preact-text", "preact-search-results", "preact-stack", "raw-text-style", "raw-text-elements", "style-heavy-catalog"].map(scenario =>
-    `build/ssr-html/${scenario}.html`),
+  ...[...new Set([...scenarios, ...jvmScenarios])].map(scenario => `build/ssr-html/${scenario}.html`),
   ...scenarios.flatMap(scenario => ["js", "wasm"].map(target =>
     `build/web/static/${scenario}/${target}/${scenario}-compose.js`)),
 ];
@@ -82,13 +79,13 @@ async function contentFingerprint(directory, listArguments) {
   return hash(entries.join("\n"));
 }
 
-async function composeFingerprint(checkout) {
+async function sourceFingerprint(directory) {
   let repository = null;
   try {
-    repository = execFileSync("git", ["-C", checkout, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
+    repository = execFileSync("git", ["-C", directory, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
   } catch {}
   if (repository) {
-    const state = gitState(checkout);
+    const state = gitState(directory);
     return {
       revision: state?.revision ?? null,
       diffSha256: state?.diffSha256 ?? null,
@@ -96,28 +93,7 @@ async function composeFingerprint(checkout) {
     };
   }
   return {
-    contentSha256: await recursiveDirFingerprint(checkout),
-  };
-}
-
-async function dependenciesFingerprint(dir) {
-  const resolved = resolve(dir);
-  let repository = null;
-  try {
-    repository = execFileSync("git", ["-C", resolved, "rev-parse", "--show-toplevel"], { encoding: "utf8" }).trim();
-  } catch {}
-  if (repository) {
-    const state = gitState(resolved);
-    return {
-      path: resolved,
-      revision: state?.revision ?? null,
-      diffSha256: state?.diffSha256 ?? null,
-      untrackedSha256: await contentFingerprint(repository, ["--others", "--exclude-standard"]),
-    };
-  }
-  return {
-    path: resolved,
-    contentSha256: await recursiveDirFingerprint(resolved),
+    contentSha256: await recursiveDirFingerprint(directory),
   };
 }
 
@@ -128,8 +104,8 @@ async function fingerprint() {
     checkout,
     expectedRevision: options.revision,
     reactMode: options["react-mode"] ?? "production",
-    compose: await composeFingerprint(checkout),
-    dependencies: deps ? await dependenciesFingerprint(deps) : null,
+    compose: await sourceFingerprint(checkout),
+    dependencies: deps ? { path: deps, ...await sourceFingerprint(deps) } : null,
     sources: await contentFingerprint(rootDirectory, ["--cached", "--others", "--exclude-standard", "--", "implementations", "workloads"]),
     packageLockSha256: hash(await readFile(resolve(rootDirectory, "package-lock.json"))),
   };
@@ -162,7 +138,14 @@ function differences(recorded, current, prefix = "") {
 }
 
 
-if (mode === "reusable") {
+if (mode === "dependencies") {
+  const manifest = JSON.parse(await readFile(resolve(rootDirectory, "package.json")));
+  for (const [name, version] of Object.entries({ ...manifest.dependencies, ...manifest.devDependencies })) {
+    let actual;
+    try { actual = JSON.parse(await readFile(resolve(rootDirectory, "node_modules", name, "package.json"))).version; } catch {}
+    if (actual !== version) throw new Error(`${name}: expected ${version}, found ${actual ?? "missing"}. Run npm ci in the repository root.`);
+  }
+} else if (mode === "reusable") {
   let recorded;
   try { recorded = JSON.parse(await readFile(stampPath, "utf8")); }
   catch { console.log("No previous preparation stamp."); process.exit(1); }

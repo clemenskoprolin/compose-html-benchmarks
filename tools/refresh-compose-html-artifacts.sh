@@ -3,31 +3,10 @@ set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
-ENV_FILE="${BENCHMARK_ENV_FILE:-}"
-if [[ -z "$ENV_FILE" ]]; then
-  if [[ -f "$REPO_ROOT/tools/benchmarks.env" ]]; then
-    ENV_FILE="$REPO_ROOT/tools/benchmarks.env"
-  elif [[ -f "$REPO_ROOT/benchmarks.env" ]]; then
-    ENV_FILE="$REPO_ROOT/benchmarks.env"
-  fi
-fi
-if [[ -n "$ENV_FILE" && -f "$ENV_FILE" ]]; then
-  pre_env=$(mktemp)
-  export -p > "$pre_env"
-  set -a
-  # shellcheck disable=SC1090
-  source "$ENV_FILE"
-  # shellcheck disable=SC1090
-  source "$pre_env"
-  rm -f "$pre_env"
-  set +a
-fi
-
-read_local_property() {
-  [[ -f "$REPO_ROOT/local.properties" ]] || return 0
-  awk -v key="$1" 'index($0, key "=") == 1 { print substr($0, length(key) + 2); exit }' \
-    "$REPO_ROOT/local.properties"
-}
+SCRIPT_DIR="$REPO_ROOT/tools"
+# shellcheck source=common.sh
+source "$SCRIPT_DIR/common.sh"
+load_benchmark_env
 
 CHECKOUT="${1:-${COMPOSE_HTML_CHECKOUT:-}}"
 if [[ -z "$CHECKOUT" ]]; then CHECKOUT="$(read_local_property compose.html.checkout)"; fi

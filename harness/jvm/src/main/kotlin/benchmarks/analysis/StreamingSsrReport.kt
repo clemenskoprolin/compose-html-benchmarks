@@ -2,10 +2,7 @@ package benchmarks.analysis
 
 import benchmarks.compose.streamComposeScenario
 import benchmarks.thymeleaf.ThymeleafRenderer
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
-import com.fasterxml.jackson.module.kotlin.readValue
 import java.io.File
-import java.lang.management.ManagementFactory
 
 private val composeStreamOutput = System.getenv("BENCHMARK_STREAM_OUTPUT") ?: "string"
 private val milestones = contentMilestones()
@@ -50,12 +47,8 @@ private fun worker(
     val name = scenario.argument
     val fixture = workloadFixture(name)
     val variables = mapOf("data" to fixture)
-    val allocationBean = ManagementFactory.getThreadMXBean() as? com.sun.management.ThreadMXBean
-    if (allocationBean?.isThreadAllocatedMemorySupported == true && !allocationBean.isThreadAllocatedMemoryEnabled) {
-        allocationBean.isThreadAllocatedMemoryEnabled = true
-    }
-    fun allocated(): Long? = if (allocationBean?.isThreadAllocatedMemorySupported == true)
-        allocationBean.getThreadAllocatedBytes(Thread.currentThread().threadId()) else null
+    val allocation = ThreadAllocation()
+    fun allocated(): Long? = if (allocation.supported) allocation.read() else null
 
     val milestone = milestones.getValue(name)
     var contentBytes: Int? = null
@@ -118,19 +111,14 @@ private fun setting(name: String, default: Int, min: Int = 1): Int {
     return value
 }
 
-private fun median(values: List<Double>): Double {
-    val sorted = values.sorted()
-    return (sorted[(sorted.size - 1) / 2] + sorted[sorted.size / 2]) / 2
-}
-
 fun main(args: Array<String>) {
     require(composeStreamOutput in setOf("string", "writer")) { "BENCHMARK_STREAM_OUTPUT must be string or writer" }
     val warmups = setting("BENCHMARK_WARMUPS", 3, 0)
     val trials = setting("BENCHMARK_TRIALS", 15)
     val iterations = setting("BENCHMARK_ITERATIONS", 100)
     val repetitions = setting("BENCHMARK_REPETITIONS", 3)
-    val chunkSize = setting("BENCHMARK_STREAM_CHUNK_SIZE", 4096)
-    val mapper = jacksonObjectMapper()
+    val chunkSize = setting("BENCHMARK_STREAM_CHUNK_SIZE", 2048)
+    val mapper = benchmarkJson
 
     if (args.firstOrNull() == "--worker") {
         val target = JvmSsrTarget.entries.single { it.argument == args[1] }
@@ -144,7 +132,6 @@ fun main(args: Array<String>) {
     require(scenarios.isNotEmpty()) { "No streaming SSR scenarios selected" }
     val directory = File(checkNotNull(System.getenv("BENCHMARK_RESULTS_DIRECTORY")))
     directory.mkdirs()
-    val java = File(System.getProperty("java.home"), "bin/java").absolutePath
     val results = linkedMapOf<String, MutableMap<String, List<StreamingWorkerResult>>>()
 
     for (scenario in scenarios) {
@@ -154,19 +141,15 @@ fun main(args: Array<String>) {
         for (target in targets) {
             val runs = List(repetitions) { repetition ->
                 val output = File(directory, "stream-${target.argument}-${scenario.argument}-$repetition.worker.json")
-                val command = listOf(java, "-Xss16m", "-cp", System.getProperty("java.class.path"),
-                    "benchmarks.analysis.StreamingSsrReportKt", "--worker", target.argument,
-                    scenario.argument, output.absolutePath)
-                val process = ProcessBuilder(command).inheritIO().start()
-                check(process.waitFor() == 0) { "Streaming worker failed: $target ${scenario.argument}" }
-                val result = mapper.readValue<StreamingWorkerResult>(output)
-                output.delete()
-                result
+                runJvmWorker<StreamingWorkerResult>(
+                    "benchmarks.analysis.StreamingSsrReportKt", listOf(target.argument, scenario.argument), output,
+                    "Streaming worker failed: $target ${scenario.argument}",
+                )
             }
             byTarget[target.argument] = runs
             val samples = runs.flatMap { it.samples }
-            val first = median(samples.map { it.firstChunkMicros }) / 1000
-            val complete = median(samples.map { it.completionMicros }) / 1000
+            val first = median(samples.map { it.firstChunkMicros })!! / 1000
+            val complete = median(samples.map { it.completionMicros })!! / 1000
             println("Streaming ${scenario.argument} ${target.argument}: first %.3f ms, complete %.3f ms".format(first, complete))
         }
         results[scenario.argument] = byTarget

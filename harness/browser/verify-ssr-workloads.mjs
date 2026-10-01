@@ -1,14 +1,14 @@
 // Checks that the prepared Compose, React, and Thymeleaf SSR outputs describe the same DOM.
 // Preparation runs this before allowing benchmark measurements.
 import { readFile } from "node:fs/promises";
-import { ensureSsrRuntime } from "./runtime.mjs";
+import { ensureSsrRuntime, documentScenarios, ssrScenarios } from "./runtime.mjs";
 import { assertEquivalent } from "./html-equivalence.mjs";
 ensureSsrRuntime();
 const { renderScenario, renderBodyScenario } = await import("../../build/web/react/dist/server-render.mjs");
 const fixtures = JSON.parse(await readFile(new URL("../../workloads/jvm/src/main/resources/fixtures.json", import.meta.url)));
-const scenarios = ["tailwind-catalog", "form-app", "data-table", "svg-dashboard", "content-article", "preact-text", "preact-search-results", "preact-stack", "hydrate1k"];
-const thymeleafScenarios = new Set(["tailwind-catalog", "form-app", "data-table", "svg-dashboard", "content-article", "preact-text", "preact-search-results", "preact-stack"]);
-const bodyScenarios = new Set(["tailwind-catalog", "form-app", "data-table", "svg-dashboard", "content-article"]);
+const scenarios = [...ssrScenarios, "hydrate1k"];
+const thymeleafScenarios = new Set(ssrScenarios);
+const bodyScenarios = new Set(documentScenarios);
 const isolatedBenchmarkScenarios = new Set(scenarios.filter((scenario) => scenario !== "hydrate1k"));
 for (const scenario of scenarios) {
   const compose = await readFile(new URL(`../../build/ssr-html/${scenario}.html`, import.meta.url), "utf8");

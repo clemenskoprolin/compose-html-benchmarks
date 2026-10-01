@@ -2,48 +2,10 @@
 package benchmarks.analysis
 
 import benchmarks.compose.*
-import benchmarks.model.*
-import benchmarks.thymeleaf.ThymeleafRenderer
-import com.fasterxml.jackson.module.kotlin.jacksonObjectMapper
 import java.io.File
-import java.lang.management.ManagementFactory
 import java.time.Instant
 import kotlin.time.DurationUnit
 import kotlin.time.measureTime
-
-private val workloadNames = listOf(
-    "tailwind-catalog", "form-app", "data-table", "svg-dashboard", "content-article",
-    "preact-text", "preact-search-results", "preact-stack", "raw-text-style", "raw-text-elements",
-    "style-heavy-catalog",
-)
-
-private val thymeleafWorkloads = setOf(
-    "tailwind-catalog", "form-app", "data-table", "svg-dashboard", "content-article",
-    "preact-text", "preact-search-results", "preact-stack",
-)
-
-private val skippedThymeleafWorkloads = mapOf(
-    "preact-stack" to "renderer does not finish",
-)
-
-internal enum class JvmSsrTarget(val argument: String) {
-    COMPOSE_JVM("compose"),
-    THYMELEAF("thymeleaf"),
-}
-
-internal enum class JvmSsrScenario(val argument: String) {
-    TAILWIND_CATALOG("tailwind-catalog"),
-    FORM_APP("form-app"),
-    DATA_TABLE("data-table"),
-    SVG_DASHBOARD("svg-dashboard"),
-    CONTENT_ARTICLE("content-article"),
-    PREACT_TEXT("preact-text"),
-    PREACT_SEARCH_RESULTS("preact-search-results"),
-    PREACT_STACK("preact-stack"),
-    RAW_TEXT_STYLE("raw-text-style"),
-    RAW_TEXT_ELEMENTS("raw-text-elements"),
-    STYLE_HEAVY_CATALOG("style-heavy-catalog"),
-}
 
 internal data class JvmSsrWorkerSettings(
     val warmups: Int,
@@ -62,69 +24,11 @@ internal data class JvmSsrWorkerResult(
     val outputBytes: Int,
 )
 
-private fun count(name: String, default: Int, minimum: Int = 1): Int =
-    (System.getenv(name)?.toIntOrNull() ?: if (System.getenv(name) == null) default else error("Invalid $name"))
-        .also { require(it >= minimum) { "$name must be >= $minimum" } }
-
 private fun composeHtmlValidationMode(): String =
     when (System.getenv("COMPOSE_HTML_VALIDATE_STRICTLY")?.trim()?.lowercase()) {
         "true", "1" -> "strict"
         else -> "fast"
     }
-
-private fun median(values: List<Double>): Double? {
-    if (values.isEmpty()) return null
-    val sorted = values.sorted()
-    return (sorted[(sorted.size - 1) / 2] + sorted[sorted.size / 2]) / 2
-}
-
-internal fun workloadFixture(name: String): Any? = when (name) {
-    "tailwind-catalog" -> catalogFixture()
-    "form-app" -> formFixture()
-    "data-table" -> dataTableFixture()
-    "svg-dashboard" -> svgDashboardFixture()
-    "content-article" -> articleFixture()
-    "preact-search-results" -> preactSearchResultsFixture()
-    "preact-text", "preact-stack" -> null
-    "raw-text-style", "raw-text-elements" -> null
-    "style-heavy-catalog" -> catalogFixture()
-    else -> error("Unknown workload: $name")
-}
-
-private fun composeWorkload(name: String, fixture: Any?): () -> String = when (name) {
-    "tailwind-catalog" -> { { renderTailwindCatalog(fixture as CatalogData) } }
-    "form-app" -> { { renderFormApp(fixture as FormData) } }
-    "data-table" -> { { renderDataTable(fixture as DataTableData) } }
-    "svg-dashboard" -> { { renderSvgDashboard(fixture as SvgDashboardData) } }
-    "content-article" -> { { renderContentArticle(fixture as ArticleData) } }
-    "preact-text" -> ::renderPreactText
-    "preact-search-results" -> { { renderPreactSearchResults(fixture as PreactSearchResultsData) } }
-    "preact-stack" -> ::renderPreactStack
-    "raw-text-style" -> ::renderRawTextStyle
-    "raw-text-elements" -> ::renderRawTextElements
-    "style-heavy-catalog" -> { { renderStyleHeavyCatalog(fixture as CatalogData) } }
-    else -> error("Unknown workload: $name")
-}
-
-private fun thymeleafWorkload(name: String, fixture: Any?): (() -> String)? = when (name) {
-    in thymeleafWorkloads -> { { ThymeleafRenderer.render(name, mapOf("data" to fixture)) } }
-    else -> null
-}
-
-internal fun prepareJvmSsrWorkload(target: JvmSsrTarget, scenario: JvmSsrScenario): () -> String {
-    val name = scenario.argument
-    if (target == JvmSsrTarget.THYMELEAF) {
-        skippedThymeleafWorkloads[name]?.let { reason ->
-            error("Thymeleaf $name is not supported: $reason")
-        }
-    }
-    val fixture = workloadFixture(name)
-    return if (target == JvmSsrTarget.THYMELEAF) {
-        thymeleafWorkload(name, fixture) ?: error("Unknown Thymeleaf workload: $name")
-    } else {
-        composeWorkload(name, fixture)
-    }
-}
 
 internal fun runJvmSsrWorker(
     target: JvmSsrTarget,
@@ -143,12 +47,8 @@ internal fun runJvmSsrWorker(
     }
 
     val fixture = workloadFixture(name)
-    val allocationBean = ManagementFactory.getThreadMXBean() as? com.sun.management.ThreadMXBean
-    if (allocationBean?.isThreadAllocatedMemorySupported == true && !allocationBean.isThreadAllocatedMemoryEnabled) {
-        allocationBean.isThreadAllocatedMemoryEnabled = true
-    }
-    fun allocated() = if (allocationBean?.isThreadAllocatedMemorySupported == true)
-        allocationBean.getThreadAllocatedBytes(Thread.currentThread().threadId()) else -1L
+    val allocation = ThreadAllocation()
+    fun allocated() = allocation.read()
     val initializationBefore = allocated()
     lateinit var render: () -> String
     lateinit var expected: String
@@ -191,7 +91,7 @@ internal fun runJvmSsrWorker(
 }
 
 fun main(args: Array<String>) {
-    val mapper = jacksonObjectMapper()
+    val mapper = benchmarkJson
     val warmups = count("BENCHMARK_WARMUPS", 3, 0)
     val samples = count("BENCHMARK_JVM_SAMPLES", count("BENCHMARK_TRIALS", 15))
     val iterations = count("BENCHMARK_ITERATIONS", 100)
@@ -226,11 +126,10 @@ fun main(args: Array<String>) {
     val directory = File(System.getenv("BENCHMARK_RESULTS_DIRECTORY")
         ?: "results/runs/${Instant.now().toString().replace(':', '-')}-jvm-${ProcessHandle.current().pid()}")
     directory.mkdirs()
-    val javaExecutable = File(System.getProperty("java.home"), "bin/java").absolutePath
-    val composeResults = activeWorkloadNames.associateWith { mutableListOf<Any>() }
+    val composeResults = activeWorkloadNames.associateWith { mutableListOf<JvmSsrWorkerResult>() }
     val thymeleafResults = activeWorkloadNames
         .filter { it in thymeleafWorkloads && it !in skippedThymeleafWorkloads }
-        .associateWith { mutableListOf<Any>() }
+        .associateWith { mutableListOf<JvmSsrWorkerResult>() }
     val hasThymeleafWorkloads = includeThymeleaf && activeWorkloadNames.any { it in thymeleafWorkloads }
     val markdown = mutableListOf<String>()
 
@@ -243,59 +142,44 @@ fun main(args: Array<String>) {
     println("Workloads: ${activeWorkloadNames.joinToString(", ")}")
     println()
 
-    for (repetition in 0 until repetitions) {
-        val order = activeWorkloadNames.drop(repetition % activeWorkloadNames.size) + activeWorkloadNames.take(repetition % activeWorkloadNames.size)
-        for (name in order) {
-            print("  Compose JVM process ${repetition + 1}/$repetitions ($name)... ")
-            System.out.flush()
-            val resultFile = File(directory, "compose-$name-$repetition.worker.json")
-            val command = mutableListOf(javaExecutable, "-Xss16m")
-            System.getProperty(COMPOSE_HTML_STRING_RENDERING_PROPERTY)?.let {
-                command += "-D$COMPOSE_HTML_STRING_RENDERING_PROPERTY=$it"
+    fun runTarget(target: JvmSsrTarget, name: String, repetition: Int) {
+        val isCompose = target == JvmSsrTarget.COMPOSE_JVM
+        val label = if (isCompose) "Compose JVM" else "Thymeleaf  "
+        print("  $label process ${repetition + 1}/$repetitions ($name)... ")
+        System.out.flush()
+        val jvmArguments = buildList {
+            if (isCompose) System.getProperty(COMPOSE_HTML_STRING_RENDERING_PROPERTY)?.let {
+                add("-D$COMPOSE_HTML_STRING_RENDERING_PROPERTY=$it")
             }
             System.getProperty("benchmarks.profile.directory")?.let { path ->
-                val profile = File(path, "compose-$name-$repetition.jfr")
+                val profile = File(path, "${target.argument}-$name-$repetition.jfr")
                 profile.parentFile.mkdirs()
-                command += "-XX:StartFlightRecording=filename=${profile.absolutePath},settings=profile,dumponexit=true"
+                add("-XX:StartFlightRecording=filename=${profile.absolutePath},settings=profile,dumponexit=true")
             }
-            command += listOf("-cp", System.getProperty("java.class.path"),
-                "benchmarks.analysis.SsrColdWarmReportKt", "--worker", "compose", name, resultFile.absolutePath)
-            val process = ProcessBuilder(command).inheritIO().start()
-            check(process.waitFor() == 0) { "Compose JVM worker failed: $name" }
-            val workerNode = mapper.readTree(resultFile)
-            composeResults.getValue(name).add(workerNode)
-            val workerFirst = workerNode["initializationAndFirst"]["micros"].asDouble()
-            val workerWarm = median(workerNode["subsequent"].map { it["micros"].asDouble() })!!
-            val workerAllocations = workerNode["subsequent"].mapNotNull { it["allocatedBytes"].takeUnless { n -> n.isNull }?.asDouble() }
-            val workerMemory = median(workerAllocations)?.let { " | Heap alloc: %.2f MiB".format(it / 1024 / 1024) } ?: ""
-            println("Init + first: %.3f ms | Warm: %.3f ms%s".format(workerFirst / 1000.0, workerWarm / 1000.0, workerMemory))
-            resultFile.delete()
+        }
+        val result = runJvmWorker<JvmSsrWorkerResult>(
+            "benchmarks.analysis.SsrColdWarmReportKt", listOf(target.argument, name),
+            File(directory, "${target.argument}-$name-$repetition.worker.json"),
+            "${if (isCompose) "Compose JVM" else "Thymeleaf"} worker failed: $name", jvmArguments,
+        )
+        (if (isCompose) composeResults else thymeleafResults).getValue(name).add(result)
+        val first = result.initializationAndFirst.micros / 1000
+        val warm = median(result.subsequent.map { it.micros })!! / 1000
+        val allocations = result.subsequent.mapNotNull { it.allocatedBytes }
+        val memory = median(allocations)?.let { " | Heap alloc: %.2f MiB".format(it / 1024 / 1024) } ?: ""
+        println("Init + first: %.3f ms | Warm: %.3f ms%s".format(first, warm, memory))
+    }
 
-            val thymeleafSkipReason = skippedThymeleafWorkloads[name]
-            if (includeThymeleaf && thymeleafSkipReason != null) {
-                println("  Thymeleaf   process ${repetition + 1}/$repetitions ($name)... SKIPPED ($thymeleafSkipReason)")
+    for (repetition in 0 until repetitions) {
+        val offset = repetition % activeWorkloadNames.size
+        val order = activeWorkloadNames.drop(offset) + activeWorkloadNames.take(offset)
+        for (name in order) {
+            runTarget(JvmSsrTarget.COMPOSE_JVM, name, repetition)
+            val skipReason = skippedThymeleafWorkloads[name]
+            if (includeThymeleaf && skipReason != null) {
+                println("  Thymeleaf   process ${repetition + 1}/$repetitions ($name)... SKIPPED ($skipReason)")
             } else if (includeThymeleaf && name in thymeleafWorkloads) {
-                print("  Thymeleaf   process ${repetition + 1}/$repetitions ($name)... ")
-                System.out.flush()
-                val thResultFile = File(directory, "thymeleaf-$name-$repetition.worker.json")
-                val thCommand = mutableListOf(javaExecutable, "-Xss16m")
-                System.getProperty("benchmarks.profile.directory")?.let { path ->
-                    val profile = File(path, "thymeleaf-$name-$repetition.jfr")
-                    profile.parentFile.mkdirs()
-                    thCommand += "-XX:StartFlightRecording=filename=${profile.absolutePath},settings=profile,dumponexit=true"
-                }
-                thCommand += listOf("-cp", System.getProperty("java.class.path"),
-                    "benchmarks.analysis.SsrColdWarmReportKt", "--worker", "thymeleaf", name, thResultFile.absolutePath)
-                val thProcess = ProcessBuilder(thCommand).inheritIO().start()
-                check(thProcess.waitFor() == 0) { "Thymeleaf worker failed: $name" }
-                val thNode = mapper.readTree(thResultFile)
-                thymeleafResults.getValue(name).add(thNode)
-                val thFirst = thNode["initializationAndFirst"]["micros"].asDouble()
-                val thWarm = median(thNode["subsequent"].map { it["micros"].asDouble() })!!
-                val thAllocations = thNode["subsequent"].mapNotNull { it["allocatedBytes"].takeUnless { n -> n.isNull }?.asDouble() }
-                val thMemory = median(thAllocations)?.let { " | Heap alloc: %.2f MiB".format(it / 1024 / 1024) } ?: ""
-                println("Init + first: %.3f ms | Warm: %.3f ms%s".format(thFirst / 1000.0, thWarm / 1000.0, thMemory))
-                thResultFile.delete()
+                runTarget(JvmSsrTarget.THYMELEAF, name, repetition)
             }
         }
     }
@@ -309,44 +193,26 @@ fun main(args: Array<String>) {
         )
     )
     println("-".repeat(124))
-    for (name in activeWorkloadNames) {
-        val processes = composeResults.getValue(name)
-        val nodes = processes.map { mapper.valueToTree<com.fasterxml.jackson.databind.JsonNode>(it) }
-        val first = median(nodes.map { it["initializationAndFirst"]["micros"].asDouble() })!!
-        val warm = median(nodes.flatMap { it["subsequent"].map { sample -> sample["micros"].asDouble() } })!!
-        val allocations = nodes.flatMap { it["subsequent"].mapNotNull { sample ->
-            sample["allocatedBytes"].takeUnless { it.isNull }?.asDouble()
-        } }
+    fun resultCells(processes: List<JvmSsrWorkerResult>): List<String> {
+        val samples = processes.flatMap { it.subsequent }
+        val first = median(processes.map { it.initializationAndFirst.micros })!!
+        val warm = median(samples.map { it.micros })!!
+        val allocations = samples.mapNotNull { it.allocatedBytes }
         val memory = median(allocations)?.let { "%.2f MiB".format(it / 1024 / 1024) } ?: "n/a"
-        markdown += "| $name | %.3f ms | %.3f ms | $memory |".format(first / 1000.0, warm / 1000.0)
-        val firstFormatted = "%.3f ms".format(first / 1000.0)
-        val warmFormatted = "%.3f ms".format(warm / 1000.0)
-        println(
-            "%-25s %-16s %22s %20s %18s".format(
-                name, "Compose JVM", firstFormatted, warmFormatted, memory
-            )
-        )
-
-        val thProcesses = thymeleafResults[name]
-        if (!thProcesses.isNullOrEmpty()) {
-            val thNodes = thProcesses.map { mapper.valueToTree<com.fasterxml.jackson.databind.JsonNode>(it) }
-            val thFirst = median(thNodes.map { it["initializationAndFirst"]["micros"].asDouble() })!!
-            val thWarm = median(thNodes.flatMap { it["subsequent"].map { sample -> sample["micros"].asDouble() } })!!
-            val thAllocations = thNodes.flatMap { it["subsequent"].mapNotNull { sample ->
-                sample["allocatedBytes"].takeUnless { it.isNull }?.asDouble()
-            } }
-            val thMemory = median(thAllocations)?.let { "%.2f MiB".format(it / 1024 / 1024) } ?: "n/a"
-            println(
-                "%-25s %-16s %22s %20s %18s".format(
-                    "", "Thymeleaf", "%.3f ms".format(thFirst / 1000.0), "%.3f ms".format(thWarm / 1000.0), thMemory
-                )
-            )
+        return listOf("%.3f ms".format(first / 1000), "%.3f ms".format(warm / 1000), memory)
+    }
+    fun printRow(name: String, target: String, cells: List<String>) {
+        println("%-25s %-16s %22s %20s %18s".format(name, target, *cells.toTypedArray()))
+    }
+    for (name in activeWorkloadNames) {
+        val cells = resultCells(composeResults.getValue(name))
+        markdown += "| $name | ${cells.joinToString(" | ")} |"
+        printRow(name, "Compose JVM", cells)
+        val thymeleaf = thymeleafResults[name]
+        if (!thymeleaf.isNullOrEmpty()) {
+            printRow("", "Thymeleaf", resultCells(thymeleaf))
         } else if (includeThymeleaf && name in skippedThymeleafWorkloads) {
-            println(
-                "%-25s %-16s %22s %20s %18s".format(
-                    "", "Thymeleaf", "SKIPPED", "SKIPPED", "n/a"
-                )
-            )
+            printRow("", "Thymeleaf", listOf("SKIPPED", "SKIPPED", "n/a"))
         }
         println("-".repeat(124))
     }
@@ -368,7 +234,7 @@ Each workload runs in $repetitions fresh JVMs with a 16 MiB stack and Kotlin's m
 ${markdown.joinToString("\n")}
 """)
     val summary = ProcessBuilder(
-        System.getenv("BENCHMARK_NODE") ?: "node", "tools/append-jvm-summary.mjs", directory.absolutePath,
+        System.getenv("BENCHMARK_NODE") ?: "node", "harness/browser/ssr-report.mjs", directory.absolutePath,
     ).inheritIO().start()
     check(summary.waitFor() == 0) { "JVM report summary failed" }
     println("JVM results: ${directory.absolutePath}")

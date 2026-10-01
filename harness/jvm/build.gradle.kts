@@ -20,44 +20,23 @@ tasks.withType<Test>().configureEach {
     workingDir(rootProject.projectDir)
 }
 
-tasks.register<JavaExec>("exportFixtures") {
-    classpath = sourceSets["main"].runtimeClasspath
-    mainClass.set("benchmarks.analysis.ExportFixturesKt")
-}
-
-tasks.register<JavaExec>("runServer") {
-    classpath = sourceSets["main"].runtimeClasspath
-    mainClass.set("benchmarks.server.BenchmarkServerKt")
-}
-
-tasks.register<JavaExec>("exportSsrHtml") {
-    classpath = sourceSets["main"].runtimeClasspath
-    mainClass.set("benchmarks.analysis.ExportSsrHtmlKt")
-    jvmArgs("-Xss16m")
-}
-
-tasks.register<JavaExec>("reportSsrColdWarm") {
-    classpath = sourceSets["main"].runtimeClasspath
-    mainClass.set("benchmarks.analysis.SsrColdWarmReportKt")
-    jvmArgs("-Xss16m")
-}
-
-tasks.register<JavaExec>("reportSsrStreaming") {
-    classpath = sourceSets["main"].runtimeClasspath
-    mainClass.set("benchmarks.analysis.StreamingSsrReportKt")
-    jvmArgs("-Xss16m")
-}
-
-tasks.register<JavaExec>("reportStreamingThroughput") {
-    classpath = sourceSets["main"].runtimeClasspath
-    mainClass.set("benchmarks.analysis.StreamingThroughputKt")
-    jvmArgs("-Xss16m")
-}
-
-tasks.register<JavaExec>("profileSsrColdWarm") {
-    classpath = sourceSets["main"].runtimeClasspath
-    mainClass.set("benchmarks.analysis.SsrColdWarmReportKt")
-    jvmArgs("-Xss16m", "-Dbenchmarks.profile.directory=${rootProject.file("results/profiles").absolutePath}")
+mapOf(
+    "exportFixtures" to "benchmarks.analysis.ExportFixturesKt",
+    "runServer" to "benchmarks.server.BenchmarkServerKt",
+    "exportSsrHtml" to "benchmarks.analysis.ExportSsrHtmlKt",
+    "reportSsrColdWarm" to "benchmarks.analysis.SsrColdWarmReportKt",
+    "reportSsrStreaming" to "benchmarks.analysis.StreamingSsrReportKt",
+    "reportStreamingThroughput" to "benchmarks.analysis.StreamingThroughputKt",
+    "profileSsrColdWarm" to "benchmarks.analysis.SsrColdWarmReportKt",
+).forEach { (name, entryPoint) ->
+    tasks.register<JavaExec>(name) {
+        classpath = sourceSets["main"].runtimeClasspath
+        mainClass.set(entryPoint)
+        if (name != "exportFixtures" && name != "runServer") jvmArgs("-Xss16m")
+        if (name == "profileSsrColdWarm") {
+            jvmArgs("-Dbenchmarks.profile.directory=${rootProject.file("results/profiles").absolutePath}")
+        }
+    }
 }
 
 dependencies {
