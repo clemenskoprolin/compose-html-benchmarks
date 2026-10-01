@@ -8,11 +8,15 @@ import { gitState, hash, rootDirectory } from "../harness/browser/run-record.mjs
 const stampPath = resolve(rootDirectory, "build/verification.json");
 const scenarios = ["tailwind-catalog", "form-app", "data-table", "svg-dashboard", "content-article",
   "hydrate1k", "update10th1k", "reorder1k", "filter-list"];
+const ssrScenarios = ["tailwind-catalog", "form-app", "data-table", "svg-dashboard", "content-article",
+  "preact-text", "preact-search-results", "preact-stack"];
 const requiredArtifacts = [
   "build/compose-provenance.json",
   "implementations/compose/wasm-ssr/build/compileSync/wasmJs/main/productionExecutable/optimized/compose-html-benchmarks-implementations-compose-wasm-ssr.mjs",
   "implementations/compose/wasm-ssr/build/compileSync/wasmJs/main/productionExecutable/optimized/compose-html-benchmarks-implementations-compose-wasm-ssr.wasm",
   "build/web/react/dist/server-render.mjs",
+  ...ssrScenarios.map(scenario =>
+    `build/web/react/dist/server-stream-${scenario}.mjs`),
   "workloads/jvm/src/main/resources/fixtures.json",
   ...scenarios.map(scenario => `build/ssr-html/${scenario}.html`),
   ...["preact-text", "preact-search-results", "preact-stack", "raw-text-style", "raw-text-elements", "style-heavy-catalog"].map(scenario =>
@@ -24,8 +28,9 @@ const reusableArtifacts = [
   "workloads/jvm/src/main/resources/fixtures.json",
   "build/web/react/dist/asset-manifest.json",
   "build/web/react/dist/server-render.mjs",
-  ...["tailwind-catalog", "form-app", "data-table", "svg-dashboard", "content-article",
-    "preact-text", "preact-search-results", "preact-stack"].map(scenario =>
+  ...ssrScenarios.map(scenario =>
+    `build/web/react/dist/server-stream-${scenario}.mjs`),
+  ...ssrScenarios.map(scenario =>
     `build/web/react/dist/server-render-${scenario}.mjs`),
   ...scenarios.map(scenario =>
     `build/react-html/${scenario}.html`),

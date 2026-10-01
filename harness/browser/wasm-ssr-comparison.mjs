@@ -5,6 +5,8 @@ import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { positiveInteger, rotated, summarize } from "./metrics.mjs";
 import { createRunRecord, rootDirectory } from "./run-record.mjs";
+import { scenarioSummary } from "./benchmark-summary.mjs";
+import { ssrMetrics, ssrSummaryRecords } from "./summary-data.mjs";
 
 const composeMode = process.env.BENCHMARK_COMPOSE_STRING_RENDERING ?? "keyed";
 assert(["keyed", "unkeyed"].includes(composeMode), "Wasm SSR supports keyed or unkeyed string rendering");
@@ -58,12 +60,14 @@ const results = Object.fromEntries(Object.entries(raw).map(([scenario, processes
 }]));
 const rows = Object.entries(results).map(([scenario, result]) =>
   `| ${scenario} | ${result.initializationAndFirst.median.toFixed(3)} ms | ${result.postWarmup.median.toFixed(3)} ms |`);
+const overall = scenarioSummary(ssrSummaryRecords(results, "Compose Wasm on Node"), ssrMetrics.slice(0, 2));
 console.log("\n" + "=".repeat(108));
 console.log("KOTLIN/WASM NODE SSR RESULTS");
 console.log("=".repeat(108));
 for (const [scenario, result] of Object.entries(results)) {
   console.log(`${scenario.padEnd(25)} ${(result.initializationAndFirst.median.toFixed(3) + " ms").padStart(16)} ${(result.postWarmup.median.toFixed(3) + " ms").padStart(16)}`);
 }
+console.log(overall.console);
 await writeFile(resolve(record.directory, "wasm-results.json"), JSON.stringify(results, null, 2) + "\n");
 await writeFile(resolve(record.directory, "wasm-results.md"), `# Kotlin/Wasm Node SSR results\n\n` +
   `The optimized production executable uses ${composeMode} rendering in ${repetitions} fresh Node processes per workload. ` +
@@ -71,5 +75,5 @@ await writeFile(resolve(record.directory, "wasm-results.md"), `# Kotlin/Wasm Nod
   `Times use Node's monotonic \`performance.now()\`; process startup and fixture parsing are excluded. ` +
   `Each workload's first output must exactly match the prepared Compose JVM HTML, and later output must remain identical. ` +
   `Heap allocation is not reported because Node's V8 heap counters do not cover Wasm linear memory.\n\n` +
-  `| Scenario | First render median | Subsequent median |\n| :--- | ---: | ---: |\n${rows.join("\n")}\n`);
+  `| Scenario | First render median | Subsequent median |\n| :--- | ---: | ---: |\n${rows.join("\n")}\n${overall.markdown}`);
 await record.complete();

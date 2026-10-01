@@ -1,0 +1,34 @@
+{
+  "tailwind-catalog": {
+    "description": "First complete product card",
+    "elements": [{ "tag": "div", "classes": ["bg-white", "rounded-lg", "border-slate-200"] }]
+  },
+  "form-app": {
+    "description": "First label and its input",
+    "elements": [{ "tag": "label" }, { "tag": "input" }]
+  },
+  "data-table": {
+    "description": "Table header and first complete data row",
+    "elements": [{ "tag": "thead" }, { "tag": "tr", "ancestor": "tbody" }]
+  },
+  "svg-dashboard": {
+    "description": "First complete chart SVG",
+    "elements": [{ "tag": "svg" }]
+  },
+  "content-article": {
+    "description": "Article heading and first complete paragraph",
+    "elements": [{ "tag": "h1" }, { "tag": "p", "ancestor": "article" }]
+  },
+  "preact-text": {
+    "description": "First complete text pair",
+    "elements": [{ "tag": "span", "classes": ["foo"] }, { "tag": "span", "classes": ["bar"] }]
+  },
+  "preact-search-results": {
+    "description": "First complete search result",
+    "elements": [{ "tag": "div", "classes": ["search-results-item"] }]
+  },
+  "preact-stack": {
+    "description": "First complete leaf text",
+    "elements": [{ "tag": "span", "attributes": { "data-testid": "stack" } }]
+  }
+}

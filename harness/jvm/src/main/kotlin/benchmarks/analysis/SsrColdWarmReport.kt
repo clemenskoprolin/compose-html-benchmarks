@@ -78,7 +78,7 @@ private fun median(values: List<Double>): Double? {
     return (sorted[(sorted.size - 1) / 2] + sorted[sorted.size / 2]) / 2
 }
 
-private fun workloadFixture(name: String): Any? = when (name) {
+internal fun workloadFixture(name: String): Any? = when (name) {
     "tailwind-catalog" -> catalogFixture()
     "form-app" -> formFixture()
     "data-table" -> dataTableFixture()
@@ -367,5 +367,9 @@ Each workload runs in $repetitions fresh JVMs with a 16 MiB stack and Kotlin's m
 | :--- | ---: | ---: | ---: |
 ${markdown.joinToString("\n")}
 """)
+    val summary = ProcessBuilder(
+        System.getenv("BENCHMARK_NODE") ?: "node", "tools/append-jvm-summary.mjs", directory.absolutePath,
+    ).inheritIO().start()
+    check(summary.waitFor() == 0) { "JVM report summary failed" }
     println("JVM results: ${directory.absolutePath}")
 }

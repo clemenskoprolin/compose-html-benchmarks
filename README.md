@@ -66,6 +66,7 @@ BENCHMARK_MEMORY=false ./tools/run-benchmarks.sh \
 npm test
 npm run verify:ssr
 npm run benchmark:ssr
+npm run benchmark:streaming
 npm run benchmark:browser
 ```
 
@@ -77,12 +78,13 @@ machine-specific defaults. CLI options and environment variables can override it
 
 ## What is measured
 
-The main runner provides two comparisons:
+The main runner provides three comparisons:
 
 | Suite | Targets | Measures |
 | --- | --- | --- |
 | Browser | React, Compose JS, Compose Wasm | Fresh-context startup, FCP, app readiness, interaction, transfer size and memory |
 | SSR | React, Compose JVM and Thymeleaf; Kotlin/Wasm on Node via `--wasm` | Renderer initialization/first render and repeated string rendering; allocation where supported |
+| Streaming SSR | React, Compose JVM and Thymeleaf | First useful content, first 8 KiB, completion, chunk count and JVM allocation |
 
 ## Results
 

@@ -16,6 +16,10 @@ tasks.withType<JavaExec>().configureEach {
     workingDir(rootProject.projectDir)
 }
 
+tasks.withType<Test>().configureEach {
+    workingDir(rootProject.projectDir)
+}
+
 tasks.register<JavaExec>("exportFixtures") {
     classpath = sourceSets["main"].runtimeClasspath
     mainClass.set("benchmarks.analysis.ExportFixturesKt")
@@ -38,6 +42,18 @@ tasks.register<JavaExec>("reportSsrColdWarm") {
     jvmArgs("-Xss16m")
 }
 
+tasks.register<JavaExec>("reportSsrStreaming") {
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("benchmarks.analysis.StreamingSsrReportKt")
+    jvmArgs("-Xss16m")
+}
+
+tasks.register<JavaExec>("reportStreamingThroughput") {
+    classpath = sourceSets["main"].runtimeClasspath
+    mainClass.set("benchmarks.analysis.StreamingThroughputKt")
+    jvmArgs("-Xss16m")
+}
+
 tasks.register<JavaExec>("profileSsrColdWarm") {
     classpath = sourceSets["main"].runtimeClasspath
     mainClass.set("benchmarks.analysis.SsrColdWarmReportKt")
@@ -55,4 +71,5 @@ dependencies {
     implementation("org.jsoup:jsoup:1.18.1")
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.18.2")
     implementation("org.slf4j:slf4j-nop:2.0.16")
+    testImplementation(kotlin("test"))
 }

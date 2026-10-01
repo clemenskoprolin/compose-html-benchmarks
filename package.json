@@ -8,6 +8,7 @@
     "build:react": "node implementations/react/scripts/build.mjs",
     "verify:ssr": "node --stack-size=8192 harness/browser/verify-ssr-workloads.mjs",
     "benchmark:ssr": "node --stack-size=8192 harness/browser/ssr-comparison.mjs",
+    "benchmark:streaming": "./tools/run-benchmarks.sh --streaming",
     "benchmark:browser": "node harness/browser/hydration-benchmark.mjs",
     "test": "node --test harness/browser/*.test.mjs"
   },

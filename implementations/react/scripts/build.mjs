@@ -99,6 +99,20 @@ await Promise.all(Object.entries(ssrScenarioComponents).map(async ([scenario, [c
     format: "esm",
     platform: "node",
   });
+  const streamRenderer = renderer === "renderBodyComponent" ? "streamBodyComponent" : "streamDocumentComponent";
+  await build({
+    ...shared,
+    banner: nodeEsmBanner,
+    stdin: {
+      contents: `import { ${component} } from "${componentPath}"; import { ${streamRenderer} } from "../ssr/stream-renderer.jsx"; export const renderScenario = (data, options) => ${streamRenderer}(${component}, data, options${rendererArguments});`,
+      resolveDir: fileURLToPath(new URL("./", import.meta.url)),
+      sourcefile: `server-stream-${scenario}.jsx`,
+      loader: "jsx",
+    },
+    outfile: fileURLToPath(new URL(`server-stream-${scenario}.mjs`, distribution)),
+    format: "esm",
+    platform: "node",
+  });
 }));
 await writeFile(
   new URL("asset-manifest.json", distribution),

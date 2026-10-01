@@ -7,7 +7,7 @@ plugins {
 }
 
 val wasmSsrWorkloadSources by tasks.registering(Sync::class) {
-    from("../ssr/src") { exclude("ComposeHtmlStringRenderer.kt") }
+    from("../ssr/src") { exclude("ComposeHtmlStringRenderer.kt", "ComposeHtmlStreamRenderer.kt") }
     into(layout.buildDirectory.dir("generated/wasmSsrWorkloads"))
 }
 

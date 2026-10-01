@@ -4,6 +4,7 @@ import org.thymeleaf.TemplateEngine
 import org.thymeleaf.context.Context
 import org.thymeleaf.templateresolver.ClassLoaderTemplateResolver
 import org.thymeleaf.templatemode.TemplateMode
+import java.io.Writer
 
 /**
  * Standalone Thymeleaf renderer (no Spring Boot) for SSR benchmarks.
@@ -48,10 +49,14 @@ object ThymeleafRenderer {
 
     fun render(templateName: String, variables: Map<String, Any?>): String {
         val context = Context().apply { setVariables(variables) }
-        return if (templateName in fullDocumentTemplates) {
-            documentEngine.process(templateName, context)
-        } else {
-            fragmentEngine.process(templateName, context)
-        }
+        return engine(templateName).process(templateName, context)
     }
+
+    fun stream(templateName: String, variables: Map<String, Any?>, writer: Writer) {
+        val context = Context().apply { setVariables(variables) }
+        engine(templateName).process(templateName, context, writer)
+    }
+
+    private fun engine(templateName: String): TemplateEngine =
+        if (templateName in fullDocumentTemplates) documentEngine else fragmentEngine
 }

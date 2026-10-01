@@ -5,7 +5,11 @@ import benchmarks.model.PreactSearchResultsData
 import org.jetbrains.compose.web.attributes.*
 import org.jetbrains.compose.web.dom.*
 
-fun renderPreactSearchResults(data: PreactSearchResultsData): String = renderComposeHtmlToString("preact-search-results") {
+fun renderPreactSearchResults(data: PreactSearchResultsData): String =
+    renderComposeHtmlToString("preact-search-results") { PreactSearchResults(data) }
+
+@Composable
+fun PreactSearchResults(data: PreactSearchResultsData) {
     Div(attrs = { classes("search-results") }) {
         Div {
             data.items.forEach { item ->

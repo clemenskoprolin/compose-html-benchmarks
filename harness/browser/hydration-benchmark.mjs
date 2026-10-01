@@ -12,6 +12,8 @@ import { assertEquivalent } from "./html-equivalence.mjs";
 import { readFile } from "node:fs/promises";
 import { interactionInPage } from "./interaction.mjs";
 import { loadBenchmarkEnv, reactRuntimeMode } from "./runtime.mjs";
+import { scenarioSummary } from "./benchmark-summary.mjs";
+import { browserMetrics, paintMetrics, browserSummaryRecords } from "./summary-data.mjs";
 
 loadBenchmarkEnv();
 const reactMode = reactRuntimeMode();
@@ -413,6 +415,13 @@ async function run() {
       console.log("-".repeat(124));
     }
 
+    const summaryRecords = browserSummaryRecords(allResults, targetLabels);
+    const overall = scenarioSummary(summaryRecords, browserMetrics);
+    const paintOverall = scenarioSummary(summaryRecords, paintMetrics);
+    const consoleOverall = scenarioSummary(summaryRecords,
+      browserMetrics.filter(metric => ["firstReady", "laterReady", "firstAction", "warmAction", "laterRam", "laterHeap"].includes(metric.key)));
+    console.log(consoleOverall.console);
+
     const interactionVerification = scenarios.some((scenario) => interactionScenarios[scenario])
       ? `\n- **Interaction protocol**: Measure the first operation, perform ${warmups} warmup operations, then measure the subsequent operation. Filter resets to 1,000 items when necessary so both measured operations remove items 20–600.`
       : "";
@@ -431,11 +440,11 @@ Automated with Playwright and Chrome DevTools Protocol.
 
 | Scenario | Target | First-load TTFB → Ready | Subsequent TTFB → Ready | First interaction | Post-warmup interaction | App RAM first → subsequent | JS heap first → subsequent | Script transfer | DOM elements |
 | :--- | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-${markdownRows.join("\n")}
+${markdownRows.join("\n")}${overall.markdown}
 
 | Scenario | Target | First-load FCP | Subsequent FCP | Subsequent TTFB | First-load navigation → Ready | Subsequent navigation → Ready |
 | :--- | :--- | ---: | ---: | ---: | ---: | ---: |
-${paintRows.join("\n")}
+${paintRows.join("\n")}${paintOverall.markdown}
 
 FCP is first contentful paint, measured from navigation start. It can precede hydration because SSR HTML is already visible. Ready is the application's post-commit app-ready mark, not a browser paint metric. TTFB → Ready subtracts navigation responseStart; navigation → Ready includes it. Both frameworks serve pre-exported HTML from the same server. TTFB remains diagnostic, not an SSR speed comparison. CDP latency models browser resource delivery; navigation responseStart can precede the artificial delay.
 
