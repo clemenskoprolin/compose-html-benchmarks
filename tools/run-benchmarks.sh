@@ -23,8 +23,8 @@ Usage: ./tools/run-benchmarks.sh [ACTION] [OPTIONS]
 
 Runs the complete benchmark suite: SSR reports and browser hydration. The command builds nothing.
 It requires a current build/verification.json and aborts if the selected Compose checkout or the
-benchmark sources changed since it was written. Use compose-version.sh to select and prepare a
-Compose checkout before measuring.
+benchmark sources changed since it was written. Use compose-version.sh to switch a
+Compose checkout, or rebuild-benchmark.sh to rebuild and verify all artifacts.
 
 SSR renders each workload to an HTML string in fresh JVM and Node processes; it does not involve a
 browser or network. Browser hydration/startup loads the prepared server-rendered HTML in a real
@@ -32,8 +32,9 @@ browser, then measures client startup, DOM adoption or mounting, interaction, tr
 
 Actions (default: --all):
   --all                     Run complete benchmark suite (SSR reports + browser hydration)
-  --ssr                     Run SSR companion reports (Compose JVM vs React SSR)
+  --ssr                     Run SSR companion reports (Compose JVM, Wasm Node, React SSR)
   --jvm                     Run Compose JVM SSR report (includes Compose-only scenarios)
+  --wasm                    Run Kotlin/Wasm SSR in Node
   --hydration, --browser    Run Playwright browser hydration benchmarks (Compose Wasm/JS vs React 19)
 
 Shared configuration:
@@ -41,7 +42,7 @@ Shared configuration:
                             Available: tailwind-catalog, form-app, data-table, svg-dashboard,
                                        content-article, hydrate1k, update10th1k, reorder1k,
                                        filter-list; raw-text-style, raw-text-elements, and
-                                       style-heavy-catalog are JVM-only (--jvm)
+                                       style-heavy-catalog are JVM/Wasm Node only (--jvm or --wasm)
   --repetitions=N           Fresh process repetitions for both SSR and browser runs (default: 3)
   --warmups=N               Discarded renders/loads before sampling in each process
                             (defaults: 3 for SSR, 1 for browser; this option overrides both)
@@ -60,15 +61,15 @@ Server-side rendering (SSR):
   --trials=N                Timed sample groups per server process after warmup (default: 15)
   --iterations=N            HTML renders performed and averaged in each trial (default: 100)
   --compose-string-rendering=MODE
-                            Compose JVM renderer: keyed or unkeyed.
-                            Default: keyed when supported, otherwise unkeyed.
+                            Compose JVM renderer: keyed, unkeyed, direct, single-pass or streaming.
+                            Wasm Node supports keyed and unkeyed. Default: keyed when supported.
 
 Help:
   -h, --help                Display this help message and exit
 
 Examples:
   # Prepare and verify once, then measure as often as you like:
-  ./tools/compose-version.sh ../compose-html-ssr
+  ./tools/rebuild-benchmark.sh ../compose-html-ssr
   ./tools/run-benchmarks.sh
 
   # Run both SSR and hydration measurements for data-table:
@@ -112,6 +113,10 @@ while [[ $# -gt 0 ]]; do
       ;;
     --jvm)
       ACTION="jvm"
+      shift
+      ;;
+    --wasm)
+      ACTION="wasm"
       shift
       ;;
     --hydration|--browser|--client)
@@ -191,15 +196,25 @@ esac
 
 if [[ -n "${BENCHMARK_COMPOSE_STRING_RENDERING+x}" ]]; then
   case "$BENCHMARK_COMPOSE_STRING_RENDERING" in
-    keyed|unkeyed) ;;
+    keyed|unkeyed|direct|single-pass|streaming) ;;
     *)
-      echo "--compose-string-rendering must be keyed or unkeyed." >&2
+      echo "--compose-string-rendering must be keyed, unkeyed, direct, single-pass or streaming." >&2
       exit 1
       ;;
   esac
 fi
 
-if [[ "$ACTION" != "jvm" && -n "${BENCHMARK_SCENARIOS:-}" ]]; then
+RUN_WASM_SSR=1
+case "${BENCHMARK_COMPOSE_STRING_RENDERING:-keyed}" in
+  keyed|unkeyed) ;;
+  *) RUN_WASM_SSR=0 ;;
+esac
+if [[ "$ACTION" == "wasm" && $RUN_WASM_SSR -eq 0 ]]; then
+  echo "Wasm SSR supports keyed or unkeyed string rendering." >&2
+  exit 1
+fi
+
+if [[ "$ACTION" != "jvm" && "$ACTION" != "wasm" && -n "${BENCHMARK_SCENARIOS:-}" ]]; then
   IFS=',' read -r -a requested_scenarios <<< "$BENCHMARK_SCENARIOS"
   for scenario in "${requested_scenarios[@]}"; do
     scenario="${scenario#"${scenario%%[![:space:]]*}"}"
@@ -273,14 +288,26 @@ node "$SCRIPT_DIR/verification.mjs" check "${VERIFICATION_CHECK_ARGS[@]}"
 
 if [[ "$ACTION" == "jvm" ]]; then
   node "$SCRIPT_DIR/run-jvm-report.mjs" "${GRADLE_COMPOSE_ARGS[@]}" -q
+elif [[ "$ACTION" == "wasm" ]]; then
+  node "$REPO_ROOT/harness/browser/wasm-ssr-comparison.mjs"
 elif [[ "$ACTION" == "ssr" ]]; then
   node "$SCRIPT_DIR/run-jvm-report.mjs" "${GRADLE_COMPOSE_ARGS[@]}" -q
   node "$REPO_ROOT/harness/browser/ssr-comparison.mjs"
+  if [[ $RUN_WASM_SSR -eq 1 ]]; then
+    node "$REPO_ROOT/harness/browser/wasm-ssr-comparison.mjs"
+  else
+    echo "Skipping Wasm SSR for Compose renderer mode $BENCHMARK_COMPOSE_STRING_RENDERING."
+  fi
 elif [[ "$ACTION" == "hydration" ]]; then
   node "$REPO_ROOT/harness/browser/hydration-benchmark.mjs"
 elif [[ "$ACTION" == "all" ]]; then
   node "$SCRIPT_DIR/run-jvm-report.mjs" "${GRADLE_COMPOSE_ARGS[@]}" -q
   node "$REPO_ROOT/harness/browser/ssr-comparison.mjs" --defer-table
+  if [[ $RUN_WASM_SSR -eq 1 ]]; then
+    node "$REPO_ROOT/harness/browser/wasm-ssr-comparison.mjs"
+  else
+    echo "Skipping Wasm SSR for Compose renderer mode $BENCHMARK_COMPOSE_STRING_RENDERING."
+  fi
   node "$REPO_ROOT/harness/browser/hydration-benchmark.mjs"
   node "$REPO_ROOT/harness/browser/ssr-comparison.mjs" --print-table
 fi

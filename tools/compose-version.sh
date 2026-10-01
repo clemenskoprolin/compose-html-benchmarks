@@ -6,6 +6,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CHECKOUT=""
 DEPENDENCIES=""
 PREPARE=0
+FULL_REBUILD=0
 STATUS=0
 SELECTING_CHECKOUT=0
 SELECTING_DEPENDENCIES=0
@@ -40,8 +41,9 @@ Options:
                             a local Maven repository directory.
   --clear-dependencies, --without-dependencies, --reset-dependencies
                             Clear custom dependencies and revert to upstream dependencies.
-  --prepare                 Re-prepare the currently selected Compose HTML checkout and
-                            active modified dependencies.
+  --prepare                 Re-prepare the current selection using cached benchmark inputs.
+  --full-rebuild            Rebuild fixtures and React, then verify SSR output (used by
+                            rebuild-benchmark.sh).
   --status, --info          Display the currently selected checkout, revision, and dependencies.
   -h, --help                Show this help message.
 EOF
@@ -103,6 +105,11 @@ while [[ $# -gt 0 ]]; do
       shift
       ;;
     --prepare)
+      PREPARE=1
+      shift
+      ;;
+    --full-rebuild)
+      FULL_REBUILD=1
       PREPARE=1
       shift
       ;;
@@ -216,6 +223,15 @@ else
   fi
 fi
 
+# A version switch can reuse fixtures and React only when their source and mode
+# still match the last complete preparation. A clean checkout prepares fully.
+if [[ $FULL_REBUILD -eq 0 ]]; then
+  if ! node "$SCRIPT_DIR/verification.mjs" reusable "--react-mode=$BENCHMARK_REACT_MODE"; then
+    echo "Cached benchmark inputs are unavailable or stale; doing a full rebuild."
+    FULL_REBUILD=1
+  fi
+fi
+
 if [[ $SELECTING_CHECKOUT -eq 1 || $SELECTING_DEPENDENCIES -eq 1 || $CLEARING_DEPENDENCIES -eq 1 ]]; then
   LOCAL_PROPERTIES="$REPO_ROOT/local.properties"
   TEMP_PROPERTIES="$(mktemp)"
@@ -231,6 +247,17 @@ if [[ $SELECTING_CHECKOUT -eq 1 || $SELECTING_DEPENDENCIES -eq 1 || $CLEARING_DE
   trap - EXIT
 fi
 
+# A repeated selection with the same sources and complete outputs needs no build.
+# --prepare and --full-rebuild deliberately bypass this shortcut.
+if [[ $PREPARE -eq 0 && $FULL_REBUILD -eq 0 ]]; then
+  CURRENT_ARGS=("--checkout=$CHECKOUT" "--revision=$REVISION" "--react-mode=$BENCHMARK_REACT_MODE")
+  if [[ -n "$DEPENDENCIES" ]]; then CURRENT_ARGS+=("--dependencies=$DEPENDENCIES"); fi
+  if node "$SCRIPT_DIR/verification.mjs" check "${CURRENT_ARGS[@]}" >/dev/null 2>&1; then
+    echo "Compose checkout is already prepared; reusing SSR and browser artifacts."
+    exit 0
+  fi
+fi
+
 echo ""
 echo "Selected Compose HTML checkout: $CHECKOUT"
 echo "Selected Compose HTML revision: $REVISION"
@@ -240,7 +267,7 @@ if [[ -n "$DEPENDENCIES" ]]; then
 else
   echo "Selected modified dependencies: none (using upstream dependencies)"
 fi
-echo "Preparing SSR and browser hydration artifacts..."
+echo "Preparing Compose SSR and browser hydration artifacts..."
 
 cd "$REPO_ROOT"
 export COMPOSE_HTML_CHECKOUT="$CHECKOUT"
@@ -268,8 +295,14 @@ CUSTOM_DEPENDENCY_COUNT="$(sed -n 's/^\([0-9][0-9]*\) custom dependencies found$
 CUSTOM_DEPENDENCY_COUNT="${CUSTOM_DEPENDENCY_COUNT:-0}"
 rm -f "$REFRESH_LOG"
 trap - EXIT
-"$REPO_ROOT/gradlew" :harness:jvm:exportFixtures :harness:jvm:exportSsrHtml "${GRADLE_COMPOSE_ARGS[@]}" -q
-node "$REPO_ROOT/implementations/react/scripts/build.mjs"
+if [[ $FULL_REBUILD -eq 1 ]]; then
+  "$REPO_ROOT/gradlew" :harness:jvm:exportFixtures :harness:jvm:exportSsrHtml "${GRADLE_COMPOSE_ARGS[@]}" -q
+  node "$REPO_ROOT/implementations/react/scripts/build.mjs"
+else
+  "$REPO_ROOT/gradlew" :harness:jvm:exportSsrHtml "${GRADLE_COMPOSE_ARGS[@]}" -q
+fi
+
+"$REPO_ROOT/gradlew" :implementations:compose:wasm-ssr:wasmJsProductionExecutableCompileSync "${GRADLE_COMPOSE_ARGS[@]}" -q
 
 CLIENT_TASKS=()
 for SCENARIO in "${ALL_SCENARIOS[@]}"; do
@@ -279,9 +312,16 @@ done
 "$REPO_ROOT/gradlew" "${CLIENT_TASKS[@]}" "${GRADLE_COMPOSE_ARGS[@]}" -q
 COMPOSE_CLIENT_SCENARIOS="$(IFS=,; echo "${ALL_SCENARIOS[*]}")" node "$SCRIPT_DIR/package-compose-clients.mjs"
 
-node "$REPO_ROOT/harness/browser/verify-ssr-workloads.mjs"
+if [[ $FULL_REBUILD -eq 1 ]]; then
+  node "$REPO_ROOT/harness/browser/verify-ssr-workloads.mjs"
+fi
 
 VERIFICATION_ARGS=("--checkout=$CHECKOUT" "--revision=$REVISION" "--react-mode=$BENCHMARK_REACT_MODE")
+if [[ $FULL_REBUILD -eq 1 ]]; then
+  VERIFICATION_ARGS+=(--equivalence=passed)
+else
+  VERIFICATION_ARGS+=(--equivalence=skipped)
+fi
 if [[ -n "$DEPENDENCIES" ]]; then
   VERIFICATION_ARGS+=("--dependencies=$DEPENDENCIES")
 fi

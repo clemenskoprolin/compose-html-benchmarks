@@ -15,15 +15,19 @@ npx playwright install chromium
 # Compose HTML SSR/hydration currently requires an external EAP source checkout.
 git clone https://github.com/JetBrains/compose-multiplatform.git ../compose-html-ssr
 
-# Select that checkout, build all artifacts and verify equivalent output.
-./tools/compose-version.sh ../compose-html-ssr
+# Build all artifacts and verify equivalent output once.
+./tools/rebuild-benchmark.sh ../compose-html-ssr
 
-# Run the complete SSR and browser suite without rebuilding.
+# Run the standard SSR and browser suite without rebuilding.
 ./tools/run-benchmarks.sh
 ```
 
-Re-run `./tools/compose-version.sh --prepare` after a relevant change, or pass a
-different checkout to compare another Compose revision.
+Use `./tools/compose-version.sh <checkout>` to switch revisions quickly. It rebuilds
+Compose artifacts but reuses fixtures and React and skips SSR equivalence checks.
+Re-selecting the same unchanged checkout reuses its prepared SSR and browser output.
+Unchanged browser bundles also keep their packaged and compressed files.
+It runs the full rebuild automatically when benchmark inputs change or are missing;
+use `./tools/rebuild-benchmark.sh` to force one.
 
 ## Custom dependencies
 
@@ -73,19 +77,12 @@ machine-specific defaults. CLI options and environment variables can override it
 
 ## What is measured
 
-The main runner produces two complementary comparisons:
+The main runner provides two comparisons:
 
 | Suite | Targets | Measures |
 | --- | --- | --- |
 | Browser | React, Compose JS, Compose Wasm | Fresh-context startup, FCP, app readiness, interaction, transfer size and memory |
-| SSR | React and Compose JVM | Renderer initialization/first render, repeated string rendering and allocated heap per render |
-
-React allocation is estimated in a separate untimed V8 sampling pass that includes objects
-collected by GC. Compose reports exact JVM thread allocation counters.
-
-Browser runs use independent browser processes, disabled network caches, ac 4× CPU / 40 ms network-latency profile by
-default. Both frameworks receive pre-exported HTML from the same server, so browser
-TTFB is not an SSR comparison. Interaction timing includes DOM completion plus two animation frames.
+| SSR | React, Compose JVM and Thymeleaf; Kotlin/Wasm on Node via `--wasm` | Renderer initialization/first render and repeated string rendering; allocation where supported |
 
 ## Results
 

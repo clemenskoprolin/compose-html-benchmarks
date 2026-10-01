@@ -1,17 +1,34 @@
-// Records and checks the environment fingerprint produced by `compose-version.sh`, so that a
-// measurement run can skip the build/equivalence work without silently measuring
-// artifacts that no longer match their sources.
+// Records and checks prepared artifacts and identifies benchmark inputs reusable
+// across Compose version switches.
 import { execFileSync } from "node:child_process";
 import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { gitState, hash, rootDirectory } from "../harness/browser/run-record.mjs";
 
 const stampPath = resolve(rootDirectory, "build/verification.json");
+const scenarios = ["tailwind-catalog", "form-app", "data-table", "svg-dashboard", "content-article",
+  "hydrate1k", "update10th1k", "reorder1k", "filter-list"];
 const requiredArtifacts = [
   "build/compose-provenance.json",
-  "build/ssr-html/tailwind-catalog.html",
+  "implementations/compose/wasm-ssr/build/compileSync/wasmJs/main/productionExecutable/optimized/compose-html-benchmarks-implementations-compose-wasm-ssr.mjs",
+  "implementations/compose/wasm-ssr/build/compileSync/wasmJs/main/productionExecutable/optimized/compose-html-benchmarks-implementations-compose-wasm-ssr.wasm",
   "build/web/react/dist/server-render.mjs",
   "workloads/jvm/src/main/resources/fixtures.json",
+  ...scenarios.map(scenario => `build/ssr-html/${scenario}.html`),
+  ...["preact-text", "preact-search-results", "preact-stack", "raw-text-style", "raw-text-elements", "style-heavy-catalog"].map(scenario =>
+    `build/ssr-html/${scenario}.html`),
+  ...scenarios.flatMap(scenario => ["js", "wasm"].map(target =>
+    `build/web/static/${scenario}/${target}/${scenario}-compose.js`)),
+];
+const reusableArtifacts = [
+  "workloads/jvm/src/main/resources/fixtures.json",
+  "build/web/react/dist/asset-manifest.json",
+  "build/web/react/dist/server-render.mjs",
+  ...["tailwind-catalog", "form-app", "data-table", "svg-dashboard", "content-article",
+    "preact-text", "preact-search-results", "preact-stack"].map(scenario =>
+    `build/web/react/dist/server-render-${scenario}.mjs`),
+  ...scenarios.map(scenario =>
+    `build/react-html/${scenario}.html`),
 ];
 
 const [mode] = process.argv.slice(2);
@@ -140,25 +157,49 @@ function differences(recorded, current, prefix = "") {
 }
 
 
-if (mode === "write") {
+if (mode === "reusable") {
+  let recorded;
+  try { recorded = JSON.parse(await readFile(stampPath, "utf8")); }
+  catch { console.log("No previous preparation stamp."); process.exit(1); }
+  const changed = [];
+  if (recorded.reactMode !== (options["react-mode"] ?? "production")) changed.push("React runtime mode");
+  const sources = await contentFingerprint(rootDirectory, ["--cached", "--others", "--exclude-standard", "--", "implementations", "workloads"]);
+  if (recorded.sources !== sources) changed.push("benchmark sources");
+  const packageLockSha256 = hash(await readFile(resolve(rootDirectory, "package-lock.json")));
+  if (recorded.packageLockSha256 !== packageLockSha256) changed.push("package-lock.json");
+  for (const artifact of reusableArtifacts) {
+    try { await access(resolve(rootDirectory, artifact)); }
+    catch { changed.push(artifact); }
+  }
+  if (changed.length) {
+    console.log(`Rebuild required: ${changed.join(", ")}.`);
+    process.exit(1);
+  }
+  console.log("Reusing existing fixtures and React artifacts.");
+} else if (mode === "write") {
   await mkdir(resolve(rootDirectory, "build"), { recursive: true });
-  await writeFile(stampPath, JSON.stringify({ verifiedAt: new Date().toISOString(), ...await fingerprint() }, null, 2) + "\n");
-  console.log("Recorded verification stamp: build/verification.json");
+  await writeFile(stampPath, JSON.stringify({
+    preparedAt: new Date().toISOString(),
+    equivalenceChecked: options.equivalence === "passed",
+    ...await fingerprint(),
+  }, null, 2) + "\n");
+  console.log("Recorded preparation stamp: build/verification.json");
 } else if (mode === "check") {
   let recorded;
   try { recorded = JSON.parse(await readFile(stampPath, "utf8")); }
   catch { fail("This configuration has not been prepared yet."); }
   const changed = differences(recorded, await fingerprint());
-  if (changed.length > 0) fail(`Preparation is stale; changed since ${recorded.verifiedAt}: ${changed.join(", ")}.`);
+  const preparedAt = recorded.preparedAt ?? recorded.verifiedAt;
+  if (changed.length > 0) fail(`Preparation is stale; changed since ${preparedAt}: ${changed.join(", ")}.`);
   for (const artifact of requiredArtifacts) {
     await access(resolve(rootDirectory, artifact))
       .catch(() => fail(`Prepared artifact is missing: ${artifact}.`));
   }
   const compId = recorded.compose?.revision?.slice(0, 12) ?? recorded.compose?.contentSha256?.slice(0, 12) ?? "custom";
   const depInfo = recorded.dependencies ? ` + deps: ${recorded.dependencies.path}` : "";
-  console.log(`Using artifacts verified at ${recorded.verifiedAt} (Compose ${compId}${depInfo}).`);
+  console.log(`Using artifacts prepared at ${preparedAt} (Compose ${compId}${depInfo}).`);
 } else {
-  throw new Error(`Usage: verification.mjs write|check --checkout=PATH --revision=SHA [--dependencies=PATH]`);
+  throw new Error(`Usage: verification.mjs reusable|write|check --checkout=PATH --revision=SHA [--dependencies=PATH]`);
 }
 
 

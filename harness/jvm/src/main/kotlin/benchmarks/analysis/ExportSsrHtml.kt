@@ -21,6 +21,9 @@ fun main() {
         "preact-text" to renderPreactText(),
         "preact-search-results" to renderPreactSearchResults(preactSearchResultsFixture()),
         "preact-stack" to renderPreactStack(),
+        "raw-text-style" to renderRawTextStyle(),
+        "raw-text-elements" to renderRawTextElements(),
+        "style-heavy-catalog" to renderStyleHeavyCatalog(catalogFixture()),
         "hydrate1k" to renderHydrate1k(hydrate1kFixture()),
         // update10th1k measures client-side mounting; the server root is intentionally empty.
         "update10th1k" to "",
