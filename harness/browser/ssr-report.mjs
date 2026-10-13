@@ -25,37 +25,38 @@ export async function printComparisonTable(results = null, customScenarios = nul
   try {
     const jvmResultsPath = resolve(rootDirectory, "results/runs/latest/jvm-results.json");
     const jvmData = JSON.parse(await readFile(jvmResultsPath, "utf8"));
-    const jvmRaw = jvmData.rawProcesses || {};
-    const thymeleafRaw = jvmData.thymeleafProcesses || {};
+    const templateLabels = ["Thymeleaf", "JStachio", "jte"];
     if (!results) {
       const ssrResultsPath = resolve(rootDirectory, "results/runs/latest/ssr-results.json");
       results = JSON.parse(await readFile(ssrResultsPath, "utf8"));
     }
     const targetScenarios = customScenarios || Object.keys(results);
-    const commonScenarios = targetScenarios.filter(s => jvmRaw[s] && jvmRaw[s].length > 0);
+    const jvmRecords = jvmSummaryRecords(jvmData);
+    const commonScenarios = targetScenarios.filter(s => jvmRecords.some(record => record.scenario === s));
     if (commonScenarios.length > 0) {
-      const hasThymeleaf = Object.values(thymeleafRaw).some(processes => processes.length > 0);
-      const jvmRecords = jvmSummaryRecords(jvmData);
+      const templateTargets = templateLabels.filter(target => jvmRecords.some(record => record.target === target));
       const jvmRow = (scenario, target) => {
         const values = jvmRecords.find(record => record.scenario === scenario && record.target === target)?.values;
         return values && [scenario, target, `${values.first.toFixed(3)} ms`, `${values.warm.toFixed(3)} ms`,
           values.allocation == null ? "n/a" : `${values.allocation.toFixed(2)} MiB`];
       };
       const groups = commonScenarios.map(scenario => {
-        const rows = [jvmRow(scenario, "Compose JVM")];
+        const rows = [jvmRow(scenario, "Compose JVM")].filter(Boolean);
         const react = results[scenario];
         if (react) rows.push([scenario, reactLabel, `${react.initializationAndFirst.median.toFixed(3)} ms`,
           `${react.postWarmup.median.toFixed(3)} ms`, react.allocatedHeap?.median == null ? "—"
             : `${(react.allocatedHeap.median / 1024 / 1024).toFixed(2)} MiB*`]);
-        const thymeleaf = jvmRow(scenario, "Thymeleaf");
-        if (thymeleaf) rows.push(thymeleaf);
+        for (const target of templateTargets) {
+          const row = jvmRow(scenario, target);
+          if (row) rows.push(row);
+        }
         return rows;
       });
       console.log("\n" + consoleTable({
-        title: "SSR COMPARISON RESULTS — COMPOSE JVM vs REACT 19" + (hasThymeleaf ? " vs THYMELEAF" : ""),
+        title: "SSR COMPARISON RESULTS — JVM RENDERERS vs " + reactLabel,
         columns: comparisonColumns, groups, width: 124,
       }));
-      console.log("* React allocation is a V8 sampling estimate; Compose allocation uses a JVM thread counter.");
+      console.log("* React allocation is a V8 sampling estimate; JVM allocations use a thread counter.");
       const records = [...jvmSummaryRecords(jvmData), ...ssrSummaryRecords(results, reactLabel)]
         .filter(record => commonScenarios.includes(record.scenario));
       const summary = scenarioSummary(records, ssrMetrics);
@@ -92,9 +93,8 @@ export async function appendJvmSummary(directory) {
   const data = JSON.parse(await readFile(resolve(directory, "jvm-results.json"), "utf8"));
   const records = jvmSummaryRecords(data);
   const comparison = scenarioSummary(records, ssrMetrics);
-  const compose = scenarioSummary(records.filter(record => record.target === "Compose JVM"), ssrMetrics);
   const markdownPath = resolve(directory, "jvm-results.md");
-  await writeFile(markdownPath, (await readFile(markdownPath, "utf8")) + compose.markdown);
+  await writeFile(markdownPath, (await readFile(markdownPath, "utf8")) + comparison.markdown);
   await writeFile(resolve(directory, "jvm-summary.md"), `# JVM SSR overall comparison\n${comparison.markdown}`);
   console.log(comparison.console);
 }

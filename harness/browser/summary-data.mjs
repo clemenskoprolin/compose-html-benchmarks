@@ -15,7 +15,8 @@ export function ssrSummaryRecords(results, target) {
 }
 
 export function jvmSummaryRecords(data) {
-  return [["Compose JVM", data.rawProcesses], ["Thymeleaf", data.thymeleafProcesses]].flatMap(([target, results]) =>
+  return [["Compose JVM", data.rawProcesses], ["Thymeleaf", data.thymeleafProcesses],
+    ["JStachio", data.jstachioProcesses], ["jte", data.jteProcesses]].flatMap(([target, results]) =>
     Object.entries(results ?? {}).filter(([, processes]) => processes.length).map(([scenario, processes]) => {
       const samples = processes.flatMap(process => process.subsequent);
       const median = (values, divisor) => {

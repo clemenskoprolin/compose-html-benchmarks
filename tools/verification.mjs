@@ -17,6 +17,7 @@ const requiredArtifacts = [
   ...ssrScenarios.map(scenario =>
     `build/web/react/dist/server-stream-${scenario}.mjs`),
   "workloads/jvm/src/main/resources/fixtures.json",
+  ...ssrScenarios.flatMap(scenario => ["jstachio", "jte"].map(target => `build/ssr-html/${scenario}.${target}.html`)),
   ...[...new Set([...scenarios, ...jvmScenarios])].map(scenario => `build/ssr-html/${scenario}.html`),
   ...scenarios.flatMap(scenario => ["js", "wasm"].map(target =>
     `build/web/static/${scenario}/${target}/${scenario}-compose.js`)),

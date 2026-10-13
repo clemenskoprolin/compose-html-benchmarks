@@ -8,5 +8,5 @@ kotlin {
 
 dependencies {
     implementation(project(":workloads:jvm"))
-    implementation("org.thymeleaf:thymeleaf:3.1.3.RELEASE")
+    implementation("org.thymeleaf:thymeleaf:${providers.gradleProperty("thymeleaf.version").get()}")
 }

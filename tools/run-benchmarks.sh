@@ -23,10 +23,10 @@ browser or network. Browser hydration/startup loads the prepared server-rendered
 browser, then measures client startup, DOM adoption or mounting, interaction, transfer, and memory.
 
 Actions (default: --standard):
-  --standard                Run string SSR reports and browser hydration
-  --ssr                     Run SSR companion reports (Compose JVM, React SSR, Thymeleaf)
-  --streaming               Compare Compose, React and Thymeleaf streaming SSR (requires the new Compose API)
-  --jvm                     Run Compose JVM SSR report (includes Compose-only scenarios)
+  --standard                Compare Compose with React in string SSR and browser hydration
+  --ssr                     Run SSR companion reports (Compose JVM, React SSR, Thymeleaf, JStachio, jte)
+  --streaming               Compare Compose, React and JVM templates streaming SSR (requires the new Compose API)
+  --jvm                     Run JVM SSR report (includes Compose-only scenarios)
   --wasm                    Run Kotlin/Wasm SSR in Node (opt-in)
   --hydration, --browser    Run Playwright browser hydration benchmarks (Compose Wasm/JS vs React 19)
 
@@ -47,8 +47,9 @@ Shared configuration:
                             Strict enables COMPOSE_HTML_VALIDATE_STRICTLY; browser rendering stays fast.
 
 Browser hydration/startup:
-  --targets=LIST            Comma-separated browser targets (default: react,compose-wasm,compose-js)
-                            Available: react, compose-wasm, compose-js
+  --targets=LIST            Comma-separated targets (browser: react,compose-wasm,compose-js)
+                            Browser: react, compose-wasm, compose-js
+                            JVM SSR: compose-jvm, thymeleaf, jstachio, jte (default: all)
   --runs=N                  Measured page loads per browser process after warmup (default: 3)
 
 Server-side rendering (SSR):
@@ -218,7 +219,7 @@ elif [[ "$ACTION" == "ssr" ]]; then
 elif [[ "$ACTION" == "hydration" ]]; then
   node "$REPO_ROOT/harness/browser/hydration-benchmark.mjs"
 elif [[ "$ACTION" == "standard" ]]; then
-  node "$SCRIPT_DIR/run-report.mjs" jvm "${GRADLE_COMPOSE_ARGS[@]}" -q
+  BENCHMARK_TARGETS=compose-jvm node "$SCRIPT_DIR/run-report.mjs" jvm "${GRADLE_COMPOSE_ARGS[@]}" -q
   node "$REPO_ROOT/harness/browser/ssr-comparison.mjs" --defer-table
   node "$REPO_ROOT/harness/browser/hydration-benchmark.mjs"
   node "$REPO_ROOT/harness/browser/ssr-comparison.mjs" --print-table

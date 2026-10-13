@@ -47,14 +47,14 @@ object ThymeleafRenderer {
         })
     }
 
-    fun render(templateName: String, variables: Map<String, Any?>): String {
-        val context = Context().apply { setVariables(variables) }
-        return engine(templateName).process(templateName, context)
+    fun render(scenario: String, fixture: Any?): String {
+        val context = Context().apply { setVariable("data", fixture) }
+        return engine(scenario).process(scenario, context)
     }
 
-    fun stream(templateName: String, variables: Map<String, Any?>, writer: Writer) {
-        val context = Context().apply { setVariables(variables) }
-        engine(templateName).process(templateName, context, writer)
+    fun stream(scenario: String, fixture: Any?, writer: Writer) {
+        val context = Context().apply { setVariable("data", fixture) }
+        engine(scenario).process(scenario, context, writer)
     }
 
     private fun engine(templateName: String): TemplateEngine =

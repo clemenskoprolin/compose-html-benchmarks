@@ -25,7 +25,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 
-The `preact-text`, `preact-search-results`, and `preact-stack` server-side rendering workloads are adapted from
+The `preact-text`, `dynamic-text`, `dynamic-text-escaped`, `preact-search-results`, and `preact-stack` server-side rendering workloads are adapted from
 [`preact-render-to-string`](https://github.com/preactjs/preact-render-to-string).
 
 MIT License

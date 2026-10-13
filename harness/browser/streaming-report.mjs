@@ -11,6 +11,8 @@ const targets = [
   { key: "compose", label: "Compose JVM", unit: "Micros", divisor: 1000 },
   { key: "react", label: "React 19", unit: "Ms", divisor: 1 },
   { key: "thymeleaf", label: "Thymeleaf", unit: "Micros", divisor: 1000 },
+  { key: "jstachio", label: "JStachio", unit: "Micros", divisor: 1000 },
+  { key: "jte", label: "jte", unit: "Micros", divisor: 1000 },
 ];
 const columns = [
   { label: "Scenario", width: 25 }, { label: "Target", width: 16 },
@@ -28,6 +30,8 @@ export function streamingComparison(jvm, react) {
     results[scenario] = {};
     const rows = [];
     for (const target of targets) {
+      if (target.key !== "react" && jvm.targets && !jvm.targets.includes(target.key)) continue;
+      if (["jstachio", "jte"].includes(target.key) && !jvm.targets && !byTarget[target.key]) continue;
       const label = target.key === "react" && react.settings?.reactMode === "development"
         ? "React 19 (dev)" : target.label;
       const runs = target.key === "react" ? react.results[scenario] : byTarget[target.key];
@@ -81,7 +85,7 @@ All milestones are observed at the sink, including renderer buffering. ` +
     `React's writable finishes. The first validated HTML locates the content byte offset outside timing; timed sinks ` +
     `count bytes across writes without parsing HTML. Timings include the sink's counting overhead.
 
-Compose's chunk target is ${jvm.settings.chunkSize} UTF-16 code units. React and Thymeleaf control their own ` +
+Compose's chunk target is ${jvm.settings.chunkSize} UTF-16 code units. React and the JVM template engines control their own ` +
     `write sizes. Compose uses ${jvm.settings.composeOutput === "writer" ? "the JVM Writer overload" : "a String callback"}. Sinks accept output immediately; these measure HTML delivery without network backpressure. ` +
     `They do not measure browser paint. JVM output is checked against its string renderer byte-for-byte; React ` +
     `is checked by DOM equivalence against prepared Compose HTML, before and after trials. Allocations use a JVM ` +
@@ -102,7 +106,7 @@ Compose's chunk target is ${jvm.settings.chunkSize} UTF-16 code units. React and
   const isReact = row => row[1].startsWith("React 19");
   // All three reports use the same summaries, columns, units and formatting.
   await writeFile(resolve(directory, "streaming-results.json"), JSON.stringify({
-    settings: { ...jvm.settings, reactMode: react.settings.reactMode }, results,
+    settings: { ...jvm.settings, reactMode: react.settings.reactMode }, targetVersions: jvm.targetVersions, results,
     rawResults: { jvm: "jvm-streaming-results.json", react: "react-streaming-results.json" },
   }, null, 2) + "\n");
   await writeFile(resolve(directory, "streaming-results.md"), report("Streaming SSR comparison", rows, records));
@@ -110,7 +114,7 @@ Compose's chunk target is ${jvm.settings.chunkSize} UTF-16 code units. React and
     rows.filter(row => !isReact(row)), records.filter(record => record.target !== labels.react)));
   await writeFile(resolve(directory, "react-streaming-results.md"), report("React streaming SSR",
     rows.filter(isReact), records.filter(record => record.target === labels.react)));
-  console.log("\n" + consoleTable({ title: "STREAMING SSR COMPARISON — COMPOSE JVM vs REACT 19 vs THYMELEAF",
+  console.log("\n" + consoleTable({ title: "STREAMING SSR COMPARISON — COMPOSE JVM vs REACT 19 vs JVM TEMPLATES",
     columns, groups, width: columns.reduce((sum, column) => sum + column.width, columns.length - 1) }));
   if (skips) console.log(skips);
   console.log(summary.console);

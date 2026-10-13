@@ -16,6 +16,8 @@ private val profileConfiguration = JvmSsrProfileConfiguration(
     targets = listOf(
         JvmSsrTarget.COMPOSE_JVM,
         // JvmSsrTarget.THYMELEAF,
+        // JvmSsrTarget.JSTACHIO,
+        // JvmSsrTarget.JTE,
     ),
     scenarios = listOf(
         // JvmSsrScenario.DATA_TABLE,

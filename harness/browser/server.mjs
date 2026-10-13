@@ -158,6 +158,8 @@ async function sendStatic(request, response, sourceUrl, contentType) {
 
 const pageRoutes = [
   { prefix: "/react/", label: "React", renderer: "react", stack: true },
+  { prefix: "/jstachio/", label: "JStachio", renderer: "jstachio", exportHint: true },
+  { prefix: "/jte/", label: "jte", renderer: "jte", exportHint: true },
   { prefix: "/thymeleaf/", label: "Thymeleaf", renderer: "thymeleaf", exportHint: true },
   { prefix: "/compose-wasm/", label: "Compose Wasm", target: "wasm", exportHint: true },
   { prefix: "/compose-js/", label: "Compose JS", target: "js", exportHint: true },
@@ -227,8 +229,8 @@ export function createBenchmarkServer() {
       const scenario = pathname.replace(route.prefix, "");
       try {
         let html;
-        if (route.renderer === "thymeleaf") {
-          html = await readFile(new URL(`build/ssr-html/${scenario}.thymeleaf.html`, repositoryRoot), "utf8");
+        if (["thymeleaf", "jstachio", "jte"].includes(route.renderer)) {
+          html = await readFile(new URL(`build/ssr-html/${scenario}.${route.renderer}.html`, repositoryRoot), "utf8");
         } else {
           const file = route.renderer === "react"
             ? `build/react-html/${scenario}.body.html`

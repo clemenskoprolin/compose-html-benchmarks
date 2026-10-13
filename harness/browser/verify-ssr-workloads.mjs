@@ -1,4 +1,4 @@
-// Checks that the prepared Compose, React, and Thymeleaf SSR outputs describe the same DOM.
+// Checks that the prepared Compose, React, and JVM template engine SSR outputs describe the same DOM.
 // Preparation runs this before allowing benchmark measurements.
 import { readFile } from "node:fs/promises";
 import { ensureSsrRuntime, documentScenarios, ssrScenarios } from "./runtime.mjs";
@@ -7,7 +7,7 @@ ensureSsrRuntime();
 const { renderScenario, renderBodyScenario } = await import("../../build/web/react/dist/server-render.mjs");
 const fixtures = JSON.parse(await readFile(new URL("../../workloads/jvm/src/main/resources/fixtures.json", import.meta.url)));
 const scenarios = [...ssrScenarios, "hydrate1k"];
-const thymeleafScenarios = new Set(ssrScenarios);
+const templateTargets = ["thymeleaf", "jstachio", "jte"];
 const bodyScenarios = new Set(documentScenarios);
 const isolatedBenchmarkScenarios = new Set(scenarios.filter((scenario) => scenario !== "hydrate1k"));
 for (const scenario of scenarios) {
@@ -22,9 +22,12 @@ for (const scenario of scenarios) {
       assertEquivalent(aggregateHtml, benchmarkRenderer.renderScenario(fixtures[scenario]), `${scenario} ${phase} isolated benchmark render`);
     }
   }
-  if (thymeleafScenarios.has(scenario)) {
-    const thymeleaf = await readFile(new URL(`../../build/ssr-html/${scenario}.thymeleaf.html`, import.meta.url), "utf8");
-    assertEquivalent(compose, thymeleaf, `${scenario} Thymeleaf`);
+  if (ssrScenarios.includes(scenario)) {
+    for (const target of templateTargets) {
+      if (target === "thymeleaf" && scenario === "preact-stack") continue;
+      const html = await readFile(new URL(`../../build/ssr-html/${scenario}.${target}.html`, import.meta.url), "utf8");
+      assertEquivalent(compose, html, `${scenario} ${target}`);
+    }
   }
   if (bodyScenarios.has(scenario)) {
     const body = await readFile(new URL(`../../build/ssr-html/${scenario}.body.html`, import.meta.url), "utf8");

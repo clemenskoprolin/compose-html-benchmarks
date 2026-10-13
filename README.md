@@ -1,7 +1,7 @@
 # Compose HTML benchmark suite
 
 Reproducible benchmarks for Compose HTML (JVM SSR, browser JS and Wasm), React 19,
-and a Thymeleaf SSR reference. The suite uses fixtures across nine
+and JVM SSR references using Thymeleaf, JStachio and jte. The suite uses fixtures across nine
 workloads covering markup-heavy pages, hydration and DOM updates.
 
 ## Quick start
@@ -18,7 +18,7 @@ git clone https://github.com/JetBrains/compose-multiplatform.git ../compose-html
 # Build all artifacts and verify equivalent output once.
 ./tools/rebuild-benchmark.sh ../compose-html-ssr
 
-# Run the standard SSR and browser suite without rebuilding.
+# Run the standard Compose vs React SSR and browser suite without rebuilding.
 ./tools/run-benchmarks.sh
 ```
 
@@ -57,6 +57,8 @@ BENCHMARK_MEMORY=false ./tools/run-benchmarks.sh \
 ./preview react tailwind-catalog
 ./preview compose-wasm data-table
 ./preview thymeleaf form-app
+./preview jstachio data-table
+./preview jte content-article
 
 # Select a subset. See --help for every option.
 ./tools/run-benchmarks.sh --scenarios=data-table --targets=react,compose-wasm
@@ -78,13 +80,15 @@ machine-specific defaults. CLI options and environment variables can override it
 
 ## What is measured
 
-The main runner provides three comparisons:
+The default run compares Compose with React in SSR and browser benchmarks.
+Use `--ssr` or `--streaming` to include all JVM template engines:
 
 | Suite | Targets | Measures |
 | --- | --- | --- |
 | Browser | React, Compose JS, Compose Wasm | Fresh-context startup, FCP, app readiness, interaction, transfer size and memory |
-| SSR | React, Compose JVM and Thymeleaf; Kotlin/Wasm on Node via `--wasm` | Renderer initialization/first render and repeated string rendering; allocation where supported |
-| Streaming SSR | React, Compose JVM and Thymeleaf | First useful content, first 8 KiB, completion, chunk count and JVM allocation |
+| SSR (default) | React and Compose JVM; Kotlin/Wasm on Node via `--wasm` | Renderer initialization/first render and repeated string rendering; allocation where supported |
+| SSR (`--ssr`) | React, Compose JVM, Thymeleaf, JStachio and jte | Same string rendering and allocation measurements |
+| Streaming SSR (`--streaming`) | React, Compose JVM, Thymeleaf, JStachio and jte | First useful content, first 8 KiB, completion, chunk count and JVM allocation |
 
 ## Results
 
@@ -114,7 +118,7 @@ renderer does not finish in a reasonable time.
 ## Repository layout
 
 ```text
-implementations/   Compose, React and Thymeleaf implementations
+implementations/   Compose, React, Thymeleaf, JStachio and jte implementations
 workloads/         Shared models and fixtures
 harness/           Browser and JVM runners plus correctness checks
 tools/             Build, selection and benchmark orchestration

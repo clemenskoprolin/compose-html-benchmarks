@@ -1,10 +1,9 @@
-// Produces the prepared Compose and Thymeleaf HTML files used for verification and browser hydration.
+// Produces the prepared JVM renderer HTML files used for verification and browser hydration.
 package benchmarks.analysis
 
 import benchmarks.hydrate1k.hydrate1kFixture
 import benchmarks.hydrate1k.renderHydrate1k
 import java.io.File
-import benchmarks.thymeleaf.ThymeleafRenderer
 
 fun main() {
     val outDir = File("build/ssr-html")
@@ -21,10 +20,12 @@ fun main() {
     for (name in documentWorkloads) {
         File(outDir, "$name.body.html").writeText(composeWorkloadBody(name, workloadFixture(name)))
     }
-    for (name in thymeleafWorkloads) {
-        val fixture = workloadFixture(name)
-        val variables = if (fixture == null) emptyMap() else mapOf("data" to fixture)
-        File(outDir, "$name.thymeleaf.html").writeText(ThymeleafRenderer.render(name, variables))
+    for (target in JvmSsrTarget.entries.filter { it != JvmSsrTarget.COMPOSE_JVM }) {
+        for (name in templateWorkloads) {
+            // Thymeleaf's recursive stack template does not complete in practical time.
+            if (skippedJvmSsrWorkload(target, name) != null) continue
+            File(outDir, "$name.${target.argument}.html").writeText(jvmSsrWorkload(target, name, workloadFixture(name))())
+        }
     }
 
     for ((name, html) in scenarios) {

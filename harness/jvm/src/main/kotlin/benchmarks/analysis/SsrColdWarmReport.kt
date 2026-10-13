@@ -1,4 +1,4 @@
-// Coordinates fresh JVM workers that measure Compose and Thymeleaf first and subsequent SSR renders.
+// Coordinates fresh JVM workers that measure JVM renderers first and subsequent SSR renders.
 package benchmarks.analysis
 
 import benchmarks.compose.*
@@ -40,12 +40,6 @@ internal fun runJvmSsrWorker(
     require(settings.iterations >= 1) { "iterations must be >= 1" }
 
     val name = scenario.argument
-    if (target == JvmSsrTarget.THYMELEAF) {
-        skippedThymeleafWorkloads[name]?.let { reason ->
-            error("Thymeleaf $name is not supported: $reason")
-        }
-    }
-
     val fixture = workloadFixture(name)
     val allocation = ThreadAllocation()
     fun allocated() = allocation.read()
@@ -53,11 +47,7 @@ internal fun runJvmSsrWorker(
     lateinit var render: () -> String
     lateinit var expected: String
     val initializationDuration = measureTime {
-        render = if (target == JvmSsrTarget.THYMELEAF) {
-            thymeleafWorkload(name, fixture) ?: error("Unknown Thymeleaf workload: $name")
-        } else {
-            composeWorkload(name, fixture)
-        }
+        render = jvmSsrWorkload(target, name, fixture)
         expected = render()
     }
     val initializationAfter = allocated()
@@ -113,28 +103,27 @@ fun main(args: Array<String>) {
     }
 
     val requestedScenarios = System.getenv("BENCHMARK_SCENARIOS")?.split(",")?.map { it.trim() }?.filter { it.isNotEmpty() }
-    val activeWorkloadNames = if (!requestedScenarios.isNullOrEmpty()) {
+    val selectedWorkloadNames = if (!requestedScenarios.isNullOrEmpty()) {
         val matched = workloadNames.filter { it in requestedScenarios }
         if (matched.isNotEmpty()) matched else workloadNames
     } else {
         workloadNames
     }
 
-    val targetsEnv = System.getenv("BENCHMARK_TARGETS")?.split(",")?.map { it.trim() }
-    val includeThymeleaf = targetsEnv == null || "thymeleaf" in targetsEnv || (!targetsEnv.contains("compose") && !targetsEnv.contains("compose-jvm") && !targetsEnv.contains("no-thymeleaf"))
-
+    val targets = selectedJvmSsrTargets()
+    val activeWorkloadNames = selectedWorkloadNames.filter { name -> targets.any { supportsJvmSsrWorkload(it, name) } }
     val directory = File(System.getenv("BENCHMARK_RESULTS_DIRECTORY")
         ?: "results/runs/${Instant.now().toString().replace(':', '-')}-jvm-${ProcessHandle.current().pid()}")
     directory.mkdirs()
-    val composeResults = activeWorkloadNames.associateWith { mutableListOf<JvmSsrWorkerResult>() }
-    val thymeleafResults = activeWorkloadNames
-        .filter { it in thymeleafWorkloads && it !in skippedThymeleafWorkloads }
-        .associateWith { mutableListOf<JvmSsrWorkerResult>() }
-    val hasThymeleafWorkloads = includeThymeleaf && activeWorkloadNames.any { it in thymeleafWorkloads }
+    val results = targets.associateWith { target ->
+        activeWorkloadNames.filter { supportsJvmSsrWorkload(target, it) && skippedJvmSsrWorkload(target, it) == null }
+            .associateWith { mutableListOf<JvmSsrWorkerResult>() }
+    }
+    require(results.values.any { it.isNotEmpty() }) { "No supported JVM SSR scenarios selected" }
     val markdown = mutableListOf<String>()
-
+    val labels = targets.joinToString(" & ") { it.label }
     println("=".repeat(124))
-    println(if (hasThymeleafWorkloads) "JVM SSR BENCHMARK — COMPOSE JVM & THYMELEAF" else "COMPOSE JVM SSR BENCHMARK")
+    println("JVM SSR BENCHMARK — $labels")
     println("=".repeat(124))
     println("Settings: $repetitions JVM processes; each: renderer initialization + first render, $warmups warmups, $samples trials of $iterations renders | Stack 16m")
     println("Compose HTML string rendering: ${composeHtmlStringRenderingMode()}")
@@ -144,7 +133,7 @@ fun main(args: Array<String>) {
 
     fun runTarget(target: JvmSsrTarget, name: String, repetition: Int) {
         val isCompose = target == JvmSsrTarget.COMPOSE_JVM
-        val label = if (isCompose) "Compose JVM" else "Thymeleaf  "
+        val label = target.label.padEnd(11)
         print("  $label process ${repetition + 1}/$repetitions ($name)... ")
         System.out.flush()
         val jvmArguments = buildList {
@@ -160,9 +149,9 @@ fun main(args: Array<String>) {
         val result = runJvmWorker<JvmSsrWorkerResult>(
             "benchmarks.analysis.SsrColdWarmReportKt", listOf(target.argument, name),
             File(directory, "${target.argument}-$name-$repetition.worker.json"),
-            "${if (isCompose) "Compose JVM" else "Thymeleaf"} worker failed: $name", jvmArguments,
+            "${target.label} worker failed: $name", jvmArguments,
         )
-        (if (isCompose) composeResults else thymeleafResults).getValue(name).add(result)
+        results.getValue(target).getValue(name).add(result)
         val first = result.initializationAndFirst.micros / 1000
         val warm = median(result.subsequent.map { it.micros })!! / 1000
         val allocations = result.subsequent.mapNotNull { it.allocatedBytes }
@@ -174,18 +163,17 @@ fun main(args: Array<String>) {
         val offset = repetition % activeWorkloadNames.size
         val order = activeWorkloadNames.drop(offset) + activeWorkloadNames.take(offset)
         for (name in order) {
-            runTarget(JvmSsrTarget.COMPOSE_JVM, name, repetition)
-            val skipReason = skippedThymeleafWorkloads[name]
-            if (includeThymeleaf && skipReason != null) {
-                println("  Thymeleaf   process ${repetition + 1}/$repetitions ($name)... SKIPPED ($skipReason)")
-            } else if (includeThymeleaf && name in thymeleafWorkloads) {
-                runTarget(JvmSsrTarget.THYMELEAF, name, repetition)
+            for (target in targets.drop(repetition % targets.size) + targets.take(repetition % targets.size)) {
+                if (!supportsJvmSsrWorkload(target, name)) continue
+                val reason = skippedJvmSsrWorkload(target, name)
+                if (reason != null) println("  ${target.label} process ${repetition + 1}/$repetitions ($name)... SKIPPED ($reason)")
+                else runTarget(target, name, repetition)
             }
         }
     }
 
     println("\n" + "=".repeat(124))
-    println(if (hasThymeleafWorkloads) "JVM SSR RESULTS — COMPOSE JVM & THYMELEAF" else "COMPOSE JVM SSR RESULTS")
+    println("JVM SSR RESULTS — $labels")
     println("=".repeat(124))
     println(
         "%-25s %-16s %22s %20s %18s".format(
@@ -205,14 +193,16 @@ fun main(args: Array<String>) {
         println("%-25s %-16s %22s %20s %18s".format(name, target, *cells.toTypedArray()))
     }
     for (name in activeWorkloadNames) {
-        val cells = resultCells(composeResults.getValue(name))
-        markdown += "| $name | ${cells.joinToString(" | ")} |"
-        printRow(name, "Compose JVM", cells)
-        val thymeleaf = thymeleafResults[name]
-        if (!thymeleaf.isNullOrEmpty()) {
-            printRow("", "Thymeleaf", resultCells(thymeleaf))
-        } else if (includeThymeleaf && name in skippedThymeleafWorkloads) {
-            printRow("", "Thymeleaf", listOf("SKIPPED", "SKIPPED", "n/a"))
+        for (target in targets) {
+            val processes = results.getValue(target)[name]
+            if (!processes.isNullOrEmpty()) {
+                val cells = resultCells(processes)
+                markdown += "| $name | ${target.label} | ${cells.joinToString(" | ")} |"
+                printRow(name, target.label, cells)
+            } else if (skippedJvmSsrWorkload(target, name) != null) {
+                printRow(name, target.label, listOf("SKIPPED", "SKIPPED", "n/a"))
+                markdown += "| $name | ${target.label} | SKIPPED | SKIPPED | n/a |"
+            }
         }
         println("-".repeat(124))
     }
@@ -221,16 +211,16 @@ fun main(args: Array<String>) {
         "settings" to mapOf("repetitions" to repetitions, "warmups" to warmups, "trials" to samples, "iterations" to iterations, "stack" to "16m", "clock" to "kotlin.time.TimeSource.Monotonic", "composeStringRendering" to composeHtmlStringRenderingMode(), "composeValidation" to composeHtmlValidationMode()),
         "runtime" to mapOf("java" to System.getProperty("java.version"), "vm" to System.getProperty("java.vm.name"),
             "os" to System.getProperty("os.name"), "osVersion" to System.getProperty("os.version"), "arch" to System.getProperty("os.arch")),
-        "rawProcesses" to composeResults,
-        "thymeleafProcesses" to thymeleafResults,
+        "targetVersions" to targets.associate { it.argument to it.version },
+        *targets.map { it.resultKey to results.getValue(it) }.toTypedArray(),
         "skippedThymeleafWorkloads" to skippedThymeleafWorkloads,
     )))
-    File(directory, "jvm-results.md").writeText("""# Compose JVM SSR results
+    File(directory, "jvm-results.md").writeText("""# JVM SSR results
 
-Each workload runs in $repetitions fresh JVMs with a 16 MiB stack and Kotlin's monotonic `measureTime` clock. Compose HTML string rendering mode: ${composeHtmlStringRenderingMode()}; HTML validation: ${composeHtmlValidationMode()}. Renderer initialization + first render starts before the workload renderer is resolved and ends when its first HTML string is complete; it excludes process and fixture initialization. Each process performs $warmups warmups, then $samples trials of $iterations renders; subsequent timings and allocations are per-render trial means. Raw timings and allocations are retained in JSON. Unavailable allocation counters are null.
+Each workload runs in $repetitions fresh JVMs with a 16 MiB stack and Kotlin's monotonic `measureTime` clock. Compose HTML string rendering mode: ${composeHtmlStringRenderingMode()}; HTML validation: ${composeHtmlValidationMode()}. Renderer initialization + first render starts before the workload renderer is resolved and ends when its first HTML string is complete; it excludes process and fixture initialization. Each process performs $warmups warmups, then $samples trials of $iterations renders; subsequent timings and allocations are per-render trial means. JStachio 1.3.7 and jte 3.2.4 use build-time compiled templates. JStachio presentation views are constructed inside each render and included in timing and allocation; jte reads the shared fixtures directly. Raw timings and allocations are retained in JSON. Unavailable allocation counters are null.
 
-| Scenario | Renderer initialization + first render median | Subsequent median | Subsequent allocation median |
-| :--- | ---: | ---: | ---: |
+| Scenario | Target | Renderer initialization + first render median | Subsequent median | Subsequent allocation median |
+| :--- | :--- | ---: | ---: | ---: |
 ${markdown.joinToString("\n")}
 """)
     val summary = ProcessBuilder(

@@ -9,8 +9,7 @@ build/
 kotlin-js-store/
 node_modules
 implementations/react/node_modules
-results/runs/
-results/profiles/
+results/
 tools/*.env
 *.env
 !tools/*.env.example

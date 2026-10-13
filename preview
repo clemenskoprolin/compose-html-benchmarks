@@ -9,12 +9,13 @@ PORT="${BENCHMARK_PORT:-4173}"
 
 usage() {
   printf '%s\n' \
-    'Usage: ./preview [thymeleaf|react|compose-js|compose-wasm] [site]' \
+    'Usage: ./preview [thymeleaf|jstachio|jte|react|compose-js|compose-wasm] [site]' \
     '' \
     'Preview a prepared site in the default browser.' \
     '' \
     'Sites:' \
     '  thymeleaf   tailwind-catalog, form-app, data-table, svg-dashboard, content-article' \
+    '  jstachio, jte same sites as thymeleaf' \
     '  react       tailwind-catalog, form-app, data-table, svg-dashboard, content-article,' \
     '              hydrate1k, update10th1k, reorder1k, filter-list' \
     '  compose-js  same sites as react' \
@@ -39,7 +40,7 @@ TARGET="$1"
 SITE="$2"
 
 case "$TARGET" in
-  thymeleaf)
+  thymeleaf|jstachio|jte)
     SITES=(tailwind-catalog form-app data-table svg-dashboard content-article)
     ;;
   react|compose-js|compose-wasm)

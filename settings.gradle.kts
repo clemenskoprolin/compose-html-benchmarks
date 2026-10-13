@@ -8,6 +8,7 @@ pluginManagement {
     }
 
     plugins {
+        id("gg.jte.gradle").version(extra["jte.version"] as String)
         kotlin("jvm").version(extra["kotlin.version"] as String)
         kotlin("multiplatform").version(extra["kotlin.version"] as String)
         kotlin("plugin.compose").version(extra["kotlin.version"] as String)
@@ -43,6 +44,8 @@ include(":implementations:compose:shared")
 include(":implementations:compose:ssr")
 include(":implementations:compose:wasm-ssr")
 include(":implementations:thymeleaf:ssr")
+include(":implementations:jstachio:ssr")
+include(":implementations:jte:ssr")
 include(":implementations:compose:browser:hydrate1k")
 include(":implementations:compose:browser:update10th1k")
 include(":implementations:compose:browser:reorder1k")

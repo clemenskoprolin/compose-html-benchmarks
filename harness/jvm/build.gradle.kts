@@ -43,6 +43,8 @@ dependencies {
     implementation(project(":workloads:jvm"))
     implementation(project(":implementations:compose:ssr"))
     implementation(project(":implementations:thymeleaf:ssr"))
+    implementation(project(":implementations:jstachio:ssr"))
+    implementation(project(":implementations:jte:ssr"))
     implementation(project(":implementations:compose:browser:hydrate1k"))
     implementation(project(":implementations:compose:browser:update10th1k"))
     implementation(project(":implementations:compose:browser:reorder1k"))
@@ -51,4 +53,22 @@ dependencies {
     implementation("com.fasterxml.jackson.module:jackson-module-kotlin:2.18.2")
     implementation("org.slf4j:slf4j-nop:2.0.16")
     testImplementation(kotlin("test"))
+}
+
+val rendererVersions = tasks.register("rendererVersions") {
+    val versions = listOf("thymeleaf", "jstachio", "jte").associateWith {
+        providers.gradleProperty("$it.version").get()
+    }
+    inputs.properties(versions)
+    val output = layout.buildDirectory.file("generated/renderer-versions/renderer-versions.properties")
+    outputs.file(output)
+    doLast {
+        output.get().asFile.apply {
+            parentFile.mkdirs()
+            writeText(versions.entries.joinToString("\n") { "${it.key}=${it.value}" })
+        }
+    }
+}
+tasks.processResources {
+    from(rendererVersions)
 }

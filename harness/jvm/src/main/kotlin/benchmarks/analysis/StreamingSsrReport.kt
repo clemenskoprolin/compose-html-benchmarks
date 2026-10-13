@@ -2,6 +2,8 @@ package benchmarks.analysis
 
 import benchmarks.compose.streamComposeScenario
 import benchmarks.thymeleaf.ThymeleafRenderer
+import benchmarks.jstachio.JStachioRenderer
+import benchmarks.jte.JteRenderer
 import java.io.File
 
 private val composeStreamOutput = System.getenv("BENCHMARK_STREAM_OUTPUT") ?: "string"
@@ -62,6 +64,8 @@ private fun worker(
                 streamComposeScenario(name, fixture, chunkSize, counter.writer())
             else streamComposeScenario(name, fixture, chunkSize, counter::accept)
             JvmSsrTarget.THYMELEAF -> ThymeleafRenderer.stream(name, variables, counter.writer())
+            JvmSsrTarget.JSTACHIO -> JStachioRenderer.stream(name, fixture, counter.writer())
+            JvmSsrTarget.JTE -> JteRenderer.stream(name, fixture, counter.writer())
         }
         counter.finish()
         val completion = System.nanoTime() - start
@@ -133,10 +137,11 @@ fun main(args: Array<String>) {
     val directory = File(checkNotNull(System.getenv("BENCHMARK_RESULTS_DIRECTORY")))
     directory.mkdirs()
     val results = linkedMapOf<String, MutableMap<String, List<StreamingWorkerResult>>>()
+    val selectedTargets = selectedJvmSsrTargets()
 
     for (scenario in scenarios) {
-        val targets = if (scenario.argument == "preact-stack") listOf(JvmSsrTarget.COMPOSE_JVM)
-            else JvmSsrTarget.entries
+        val targets = selectedTargets.filter { supportsJvmSsrWorkload(it, scenario.argument) &&
+            skippedJvmSsrWorkload(it, scenario.argument) == null }
         val byTarget = linkedMapOf<String, List<StreamingWorkerResult>>()
         for (target in targets) {
             val runs = List(repetitions) { repetition ->
@@ -155,9 +160,15 @@ fun main(args: Array<String>) {
         results[scenario.argument] = byTarget
     }
     File(directory, "jvm-streaming-results.json").writeText(mapper.writerWithDefaultPrettyPrinter().writeValueAsString(mapOf(
+        "targetVersions" to selectedTargets.associate { it.argument to it.version },
         "settings" to mapOf("warmups" to warmups, "trials" to trials, "iterations" to iterations,
             "repetitions" to repetitions, "chunkSize" to chunkSize, "composeOutput" to composeStreamOutput),
         "results" to results,
-        "skipped" to mapOf("preact-stack/thymeleaf" to "renderer does not finish"),
+        "targets" to selectedTargets.map { it.argument },
+        "skipped" to scenarios.flatMap { scenario ->
+            selectedTargets.mapNotNull { target ->
+                skippedJvmSsrWorkload(target, scenario.argument)?.let { "${scenario.argument}/${target.argument}" to it }
+            }
+        }.toMap(),
     )))
 }

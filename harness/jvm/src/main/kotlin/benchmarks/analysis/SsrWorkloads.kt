@@ -3,14 +3,45 @@ package benchmarks.analysis
 
 import benchmarks.compose.*
 import benchmarks.model.*
+import benchmarks.jstachio.JStachioRenderer
+import benchmarks.jte.JteRenderer
 import benchmarks.thymeleaf.ThymeleafRenderer
 
-internal enum class JvmSsrTarget(val argument: String) {
-    COMPOSE_JVM("compose"),
-    THYMELEAF("thymeleaf"),
+internal enum class JvmSsrTarget(val argument: String, val label: String, val resultKey: String, val version: String? = null) {
+    COMPOSE_JVM("compose", "Compose JVM", "rawProcesses"),
+    THYMELEAF("thymeleaf", "Thymeleaf", "thymeleafProcesses", "3.1.3.RELEASE"),
+    JSTACHIO("jstachio", "JStachio", "jstachioProcesses", "1.3.7"),
+    JTE("jte", "jte", "jteProcesses", "3.2.4"),
 }
 
-internal enum class JvmSsrScenario(val argument: String, val supportsThymeleaf: Boolean = true) {
+internal fun selectedJvmSsrTargets(value: String? = System.getenv("BENCHMARK_TARGETS")): List<JvmSsrTarget> {
+    val requested = value?.split(",")?.map(String::trim)?.filter(String::isNotEmpty)
+    if (requested.isNullOrEmpty()) return JvmSsrTarget.entries
+    val selected = JvmSsrTarget.entries.filter { it.argument in requested ||
+        (it == JvmSsrTarget.COMPOSE_JVM && "compose-jvm" in requested) }
+    if (selected.isNotEmpty()) return selected
+    // Browser target selections also reach the companion JVM report.
+    return JvmSsrTarget.entries.filter { it != JvmSsrTarget.THYMELEAF || "no-thymeleaf" !in requested }
+}
+
+internal fun supportsJvmSsrWorkload(target: JvmSsrTarget, name: String): Boolean =
+    target == JvmSsrTarget.COMPOSE_JVM || name in templateWorkloads
+
+internal fun skippedJvmSsrWorkload(target: JvmSsrTarget, name: String): String? =
+    if (target == JvmSsrTarget.THYMELEAF) skippedThymeleafWorkloads[name] else null
+
+internal fun jvmSsrWorkload(target: JvmSsrTarget, name: String, fixture: Any?): () -> String {
+    require(supportsJvmSsrWorkload(target, name)) { "${target.label} does not support $name" }
+    skippedJvmSsrWorkload(target, name)?.let { error("${target.label} $name is not supported: $it") }
+    return when (target) {
+        JvmSsrTarget.COMPOSE_JVM -> composeWorkload(name, fixture)
+        JvmSsrTarget.THYMELEAF -> checkNotNull(thymeleafWorkload(name, fixture))
+        JvmSsrTarget.JSTACHIO -> { { JStachioRenderer.render(name, fixture) } }
+        JvmSsrTarget.JTE -> { { JteRenderer.render(name, fixture) } }
+    }
+}
+
+internal enum class JvmSsrScenario(val argument: String, val supportsTemplates: Boolean = true) {
     TAILWIND_CATALOG("tailwind-catalog"),
     FORM_APP("form-app"),
     DATA_TABLE("data-table"),
@@ -19,13 +50,14 @@ internal enum class JvmSsrScenario(val argument: String, val supportsThymeleaf: 
     PREACT_TEXT("preact-text"),
     PREACT_SEARCH_RESULTS("preact-search-results"),
     PREACT_STACK("preact-stack"),
-    RAW_TEXT_STYLE("raw-text-style", supportsThymeleaf = false),
-    RAW_TEXT_ELEMENTS("raw-text-elements", supportsThymeleaf = false),
-    STYLE_HEAVY_CATALOG("style-heavy-catalog", supportsThymeleaf = false),
+    RAW_TEXT_STYLE("raw-text-style", supportsTemplates = false),
+    RAW_TEXT_ELEMENTS("raw-text-elements", supportsTemplates = false),
+    STYLE_HEAVY_CATALOG("style-heavy-catalog", supportsTemplates = false),
 }
 
 internal val workloadNames = JvmSsrScenario.entries.map { it.argument }
-internal val thymeleafWorkloads = JvmSsrScenario.entries.filter { it.supportsThymeleaf }.map { it.argument }.toSet()
+internal val templateWorkloads = JvmSsrScenario.entries.filter { it.supportsTemplates }.map { it.argument }.toSet()
+internal val thymeleafWorkloads = templateWorkloads
 internal val skippedThymeleafWorkloads = mapOf("preact-stack" to "renderer does not finish")
 internal val documentWorkloads = listOf("tailwind-catalog", "form-app", "data-table", "svg-dashboard", "content-article")
 
@@ -73,15 +105,5 @@ internal fun composeWorkloadBody(name: String, fixture: Any?): String = when (na
 
 internal fun prepareJvmSsrWorkload(target: JvmSsrTarget, scenario: JvmSsrScenario): () -> String {
     val name = scenario.argument
-    if (target == JvmSsrTarget.THYMELEAF) {
-        skippedThymeleafWorkloads[name]?.let { reason ->
-            error("Thymeleaf $name is not supported: $reason")
-        }
-    }
-    val fixture = workloadFixture(name)
-    return if (target == JvmSsrTarget.THYMELEAF) {
-        thymeleafWorkload(name, fixture) ?: error("Unknown Thymeleaf workload: $name")
-    } else {
-        composeWorkload(name, fixture)
-    }
+    return jvmSsrWorkload(target, name, workloadFixture(name))
 }
