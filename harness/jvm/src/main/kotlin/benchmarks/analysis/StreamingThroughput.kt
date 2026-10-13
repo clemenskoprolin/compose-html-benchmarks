@@ -31,7 +31,7 @@ private class ByteSink : OutputStream() {
     override fun write(values: ByteArray, offset: Int, length: Int) { bytes += length }
 }
 
-/** Renderer throughput without the milestone sink's character-by-character UTF-8 counting. */
+/** Raw renderer throughput, bypassing the streaming benchmark's shared delivery pipeline. */
 fun main(args: Array<String>) {
     require(args.size == 3) { "Usage: StreamingThroughputKt string|writer|utf8|string-utf8 SCENARIO OUTPUT.json" }
     val mode = args[0]
@@ -50,7 +50,7 @@ fun main(args: Array<String>) {
     val expected = if (stress) {
         val tag = if (name == "stream-pre") "pre" else "textarea"
         "<$tag>\n\n" + ((if (tag == "pre") "<!--c-->" else "") + "a&amp;😀α".repeat(512)).repeat(256) + "</$tag>"
-    } else prepareJvmSsrWorkload(JvmSsrTarget.COMPOSE_JVM, checkNotNull(scenario))()
+    } else jvmSsrWorkload(JvmSsrTarget.COMPOSE_JVM, checkNotNull(scenario).argument, fixture)()
     check(html.toString() == expected) { "$name string stream differs from expected HTML" }
     fun verifyWriter() {
         if (mode == "string") return

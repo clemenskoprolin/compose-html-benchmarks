@@ -56,7 +56,9 @@ export const summaryMethod = "Averages: geometric means of shared workload media
 export function scenarioSummary(records, metrics) {
   const results = summarizeScenarios(records, metrics.filter(metric => metric.rank !== false))
     .filter(metric => metric.scenarios.length > 0);
-  if (!results.length) return { results, console: "", markdown: "" };
+  if (new Set(records.map(record => record.target)).size < 2 || !results.length) {
+    return { results, console: "", markdown: "" };
+  }
   const groups = results.map(metric => metric.targets.map((target, index) => {
     const average = formatCell({ decimals: metric.decimals ?? 3, suffix: metric.unit ? ` ${metric.unit}` : "" }, target.average);
     const comparison = target.average == null ? "n/a"

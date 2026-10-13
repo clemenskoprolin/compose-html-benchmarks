@@ -1,4 +1,5 @@
 // Measures React's pipeable SSR stream against the same fixtures as JVM streaming.
+import { loadFixtures } from "./fixtures.mjs";
 import assert from "node:assert/strict";
 import { readFile, writeFile } from "node:fs/promises";
 import { Writable } from "node:stream";
@@ -6,26 +7,37 @@ import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assertEquivalent } from "./html-equivalence.mjs";
 import { summarize } from "./metrics.mjs";
-import { ensureSsrRuntime, benchmarkCount as setting, runNodeFileWorker } from "./runtime.mjs";
+import { ensureSsrRuntime, benchmarkCount as setting, runNodeFileWorker, ssrScenarios } from "./runtime.mjs";
 import { contentByteOffset, StreamingCounter, streamingMilestones } from "./streaming-milestones.mjs";
+import { BufferedUtf8Sink, streamDeliverySettings } from "./buffered-utf8-sink.mjs";
 import { rootDirectory } from "./run-record.mjs";
 
 
 ensureSsrRuntime();
-const allScenarios = Object.keys(streamingMilestones);
+const allScenarios = Object.keys(streamingMilestones).filter(name => ssrScenarios.includes(name));
+const deliverySettings = streamDeliverySettings();
 
 async function renderStream(renderScenario, data, contentBytes = null, collect = false) {
   const start = performance.now();
   const pieces = collect ? [] : null;
   const counter = new StreamingCounter(contentBytes, collect);
   await new Promise((resolve, reject) => {
-    const sink = new Writable({ write(chunk, _encoding, done) {
-      if (chunk.length) {
-        counter.accept(chunk, performance.now() - start);
-        if (pieces) pieces.push(Buffer.from(chunk));
-      }
-      done();
-    } });
+    const deliver = chunk => {
+      counter.accept(chunk, performance.now() - start);
+      if (pieces) pieces.push(Buffer.from(chunk));
+    };
+    const delivery = deliverySettings.deliverySink === "buffered-utf8"
+      ? new BufferedUtf8Sink(deliver, deliverySettings.bufferBytes) : { write: deliver, finish() {} };
+    const sink = new Writable({
+      write(chunk, _encoding, done) {
+        delivery.write(chunk);
+        done();
+      },
+      final(done) {
+        delivery.finish();
+        done();
+      },
+    });
     sink.once("finish", resolve);
     sink.once("error", reject);
     let stream;
@@ -46,7 +58,7 @@ async function renderStream(renderScenario, data, contentBytes = null, collect =
 }
 
 async function worker(scenario) {
-  const fixtures = JSON.parse(await readFile(resolve(rootDirectory, "workloads/jvm/src/main/resources/fixtures.json")));
+  const fixtures = await loadFixtures();
   const data = fixtures[scenario];
   const initializationStart = performance.now();
   const { renderScenario } = await import(`../../build/web/react/dist/server-stream-${scenario}.mjs`);
@@ -114,7 +126,8 @@ if (process.argv[2] === "--worker") {
   }
   await writeFile(resolve(directory, "react-streaming-results.json"), JSON.stringify({
     settings: { repetitions, reactMode: process.env.NODE_ENV, warmups: setting("BENCHMARK_WARMUPS", 3, 0),
-      trials: setting("BENCHMARK_TRIALS", 15), iterations: setting("BENCHMARK_ITERATIONS", 100) },
+      trials: setting("BENCHMARK_TRIALS", 15), iterations: setting("BENCHMARK_ITERATIONS", 100),
+      ...deliverySettings },
     results,
   }, null, 2));
 }

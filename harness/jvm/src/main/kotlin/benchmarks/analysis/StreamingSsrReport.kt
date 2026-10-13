@@ -1,12 +1,11 @@
 package benchmarks.analysis
 
-import benchmarks.compose.streamComposeScenario
-import benchmarks.thymeleaf.ThymeleafRenderer
-import benchmarks.jstachio.JStachioRenderer
-import benchmarks.jte.JteRenderer
 import java.io.File
 
-private val composeStreamOutput = System.getenv("BENCHMARK_STREAM_OUTPUT") ?: "string"
+private val deliveryMode = (System.getenv("BENCHMARK_STREAM_DELIVERY") ?: "buffered-utf8").also {
+    require(it in setOf("buffered-utf8", "renderer")) { "BENCHMARK_STREAM_DELIVERY must be buffered-utf8 or renderer" }
+}
+private val composeStreamOutput = System.getenv("BENCHMARK_STREAM_OUTPUT") ?: "writer"
 private val milestones = contentMilestones()
 private val streamingScenarios = JvmSsrScenario.entries.filter { it.argument in milestones }
 
@@ -16,7 +15,6 @@ private data class Reading(
     val first8KiBMicros: Double?,
     val completionMicros: Double,
     val chunks: Int,
-    val chars: Int,
     val bytes: Int,
     val allocatedBytes: Long?,
 )
@@ -45,50 +43,49 @@ private fun worker(
     trials: Int,
     iterations: Int,
     chunkSize: Int,
+    bufferBytes: Int,
 ): StreamingWorkerResult {
     val name = scenario.argument
     val fixture = workloadFixture(name)
-    val variables = mapOf("data" to fixture)
     val allocation = ThreadAllocation()
     fun allocated(): Long? = if (allocation.supported) allocation.read() else null
 
     val milestone = milestones.getValue(name)
     var contentBytes: Int? = null
+    val bufferedSink = if (deliveryMode == "buffered-utf8") BufferedUtf8Sink(StreamingCounter(0), bufferBytes) else null
 
     fun measure(collectHtml: Boolean = false): Pair<Reading, String?> {
         val before = allocated()
         val start = System.nanoTime()
-        val counter = StreamingCounter(start, contentBytes, collectHtml)
-        when (target) {
-            JvmSsrTarget.COMPOSE_JVM -> if (composeStreamOutput == "writer")
-                streamComposeScenario(name, fixture, chunkSize, counter.writer())
-            else streamComposeScenario(name, fixture, chunkSize, counter::accept)
-            JvmSsrTarget.THYMELEAF -> ThymeleafRenderer.stream(name, variables, counter.writer())
-            JvmSsrTarget.JSTACHIO -> JStachioRenderer.stream(name, fixture, counter.writer())
-            JvmSsrTarget.JTE -> JteRenderer.stream(name, fixture, counter.writer())
-        }
-        counter.finish()
+        val counter = StreamingCounter(start, contentBytes, collectHtml && bufferedSink != null,
+            collectWrites = collectHtml)
+        bufferedSink?.reset(counter)
+        val rendererWriter = if (bufferedSink == null) CountingRendererWriter(counter, collectHtml) else null
+        val writer = bufferedSink?.writer ?: checkNotNull(rendererWriter)
+        streamJvmSsrWorkload(target, name, fixture, writer, chunkSize, composeStreamOutput)
+        if (bufferedSink != null) bufferedSink.finish() else writer.close()
         val completion = System.nanoTime() - start
         val after = allocated()
+        val html = if (collectHtml) bufferedSink?.let { counter.html() } ?: rendererWriter?.html() else null
         if (collectHtml && contentBytes == null) {
-            contentBytes = milestone.byteOffset(counter.html())
+            contentBytes = milestone.byteOffset(checkNotNull(html))
             counter.resolveContent(checkNotNull(contentBytes))
         }
         check(counter.firstContentNanos != null) { "$name emitted no useful content" }
         val firstChunk = checkNotNull(counter.firstChunkNanos) { "$name emitted no chunks" }
         val reading = Reading(firstChunk / 1_000.0, counter.firstContentNanos?.div(1_000.0),
             counter.first8KiBNanos?.div(1_000.0), completion / 1_000.0, counter.chunks,
-            counter.chars, counter.bytes, if (before != null && after != null) after - before else null)
-        return reading to if (collectHtml) counter.html() else null
+            counter.bytes, if (before != null && after != null) after - before else null)
+        return reading to html
     }
 
     val (first, html) = measure(collectHtml = true)
-    val expected = prepareJvmSsrWorkload(target, scenario)()
+    val expected = jvmSsrWorkload(target, name, fixture)()
     check(html == expected) { "$target $name streaming output differs from string output" }
     val expectedBytes = expected.toByteArray(Charsets.UTF_8).size
     check(first.bytes == expectedBytes) { "UTF-8 sink byte count differs from output" }
     fun validate(reading: Reading) {
-        check(reading.chars == expected.length && reading.bytes == expectedBytes) { "Output size changed" }
+        check(reading.bytes == expectedBytes) { "Output size changed" }
         check((reading.first8KiBMicros != null) == (reading.bytes >= FIRST_8_KIB_BYTES))
     }
     repeat(warmups) { validate(measure().first) }
@@ -122,12 +119,13 @@ fun main(args: Array<String>) {
     val iterations = setting("BENCHMARK_ITERATIONS", 100)
     val repetitions = setting("BENCHMARK_REPETITIONS", 3)
     val chunkSize = setting("BENCHMARK_STREAM_CHUNK_SIZE", 2048)
+    val bufferBytes = setting("BENCHMARK_STREAM_BUFFER_SIZE", DEFAULT_STREAM_BUFFER_BYTES)
     val mapper = benchmarkJson
 
     if (args.firstOrNull() == "--worker") {
         val target = JvmSsrTarget.entries.single { it.argument == args[1] }
         val scenario = JvmSsrScenario.entries.single { it.argument == args[2] }
-        File(args[3]).writeText(mapper.writeValueAsString(worker(target, scenario, warmups, trials, iterations, chunkSize)))
+        File(args[3]).writeText(mapper.writeValueAsString(worker(target, scenario, warmups, trials, iterations, chunkSize, bufferBytes)))
         return
     }
 
@@ -140,8 +138,7 @@ fun main(args: Array<String>) {
     val selectedTargets = selectedJvmSsrTargets()
 
     for (scenario in scenarios) {
-        val targets = selectedTargets.filter { supportsJvmSsrWorkload(it, scenario.argument) &&
-            skippedJvmSsrWorkload(it, scenario.argument) == null }
+        val targets = selectedTargets.filter { skipReason(it, scenario.argument) == null }
         val byTarget = linkedMapOf<String, List<StreamingWorkerResult>>()
         for (target in targets) {
             val runs = List(repetitions) { repetition ->
@@ -162,12 +159,15 @@ fun main(args: Array<String>) {
     File(directory, "jvm-streaming-results.json").writeText(mapper.writerWithDefaultPrettyPrinter().writeValueAsString(mapOf(
         "targetVersions" to selectedTargets.associate { it.argument to it.version },
         "settings" to mapOf("warmups" to warmups, "trials" to trials, "iterations" to iterations,
-            "repetitions" to repetitions, "chunkSize" to chunkSize, "composeOutput" to composeStreamOutput),
+            "repetitions" to repetitions, "chunkSize" to chunkSize, "composeOutput" to composeStreamOutput,
+            "deliverySink" to deliveryMode,
+            "bufferBytes" to if (deliveryMode == "buffered-utf8") bufferBytes else null,
+            "jvmCharacterBufferChars" to if (deliveryMode == "buffered-utf8") STREAM_CHAR_BUFFER_CHARS else null),
         "results" to results,
         "targets" to selectedTargets.map { it.argument },
         "skipped" to scenarios.flatMap { scenario ->
             selectedTargets.mapNotNull { target ->
-                skippedJvmSsrWorkload(target, scenario.argument)?.let { "${scenario.argument}/${target.argument}" to it }
+                skipReason(target, scenario.argument)?.let { "${scenario.argument}/${target.argument}" to it }
             }
         }.toMap(),
     )))

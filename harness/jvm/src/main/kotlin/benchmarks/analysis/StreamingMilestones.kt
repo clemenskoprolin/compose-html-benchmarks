@@ -39,17 +39,16 @@ internal data class ContentMilestone(val description: String, val elements: List
 internal fun contentMilestones(): Map<String, ContentMilestone> = jacksonObjectMapper()
     .readValue(File("harness/streaming-milestones.json"))
 
-// Count UTF-8 without encoding/allocating each write. Carry a high surrogate across writes,
-// as a UTF-8 Writer would, so a split supplementary character still contributes four bytes.
+// Observe actual encoded bytes after the shared delivery buffer, with no per-character scan.
 internal class StreamingCounter(
     private val start: Long,
     private val contentBytes: Int? = null,
     collectHtml: Boolean = false,
     private val nanoTime: () -> Long = System::nanoTime,
+    collectWrites: Boolean = collectHtml,
 ) {
-    private val html = if (collectHtml) StringBuilder() else null
-    private val writes = if (collectHtml) mutableListOf<Pair<Int, Long>>() else null
-    private var pendingHighSurrogate = false
+    private val html = if (collectHtml) java.io.ByteArrayOutputStream() else null
+    private val writes = if (collectWrites) mutableListOf<Pair<Int, Long>>() else null
     var firstChunkNanos: Long? = null
         private set
     var firstContentNanos: Long? = null
@@ -58,65 +57,24 @@ internal class StreamingCounter(
         private set
     var chunks = 0
         private set
-    var chars = 0
-        private set
     var bytes = 0
         private set
 
-    private fun countChar(char: Char) {
-        if (pendingHighSurrogate) {
-            pendingHighSurrogate = false
-            if (char.isLowSurrogate()) {
-                bytes += 4
-                return
-            }
-            bytes++ // Java's UTF-8 encoder replaces an unpaired surrogate with '?'.
-        }
-        when {
-            char.isHighSurrogate() -> pendingHighSurrogate = true
-            char.isLowSurrogate() -> bytes++
-            char.code < 0x80 -> bytes++
-            char.code < 0x800 -> bytes += 2
-            else -> bytes += 3
-        }
-    }
+    internal fun elapsed(): Long = nanoTime() - start
 
-    private inline fun count(length: Int, charAt: (Int) -> Char) {
-        if (length == 0) return
-        val elapsed = nanoTime() - start
+    internal fun observe(length: Int, elapsed: Long = elapsed()) {
         firstChunkNanos = firstChunkNanos ?: elapsed
         chunks++
-        chars += length
-        repeat(length) { countChar(charAt(it)) }
+        bytes += length
         if (bytes >= FIRST_8_KIB_BYTES) first8KiBNanos = first8KiBNanos ?: elapsed
         if (contentBytes != null && bytes >= contentBytes) firstContentNanos = firstContentNanos ?: elapsed
         writes?.add(bytes to elapsed)
     }
 
-    fun accept(chunk: String) {
-        count(chunk.length, chunk::get)
-        html?.append(chunk)
-    }
-
-    fun writer(): Writer = object : Writer() {
-        override fun write(chars: CharArray, offset: Int, length: Int) {
-            count(length) { chars[offset + it] }
-            html?.append(chars, offset, length)
-        }
-
-        override fun write(str: String, offset: Int, length: Int) {
-            count(length) { str[offset + it] }
-            html?.append(str, offset, offset + length)
-        }
-
-        override fun flush() = Unit
-        override fun close() = Unit
-    }
-
-    fun finish() {
-        // All benchmark fixtures must be valid UTF-16; an incomplete code point cannot be
-        // assigned an arrival time until another write or an encoding flush completes it.
-        check(!pendingHighSurrogate) { "Streaming output ends with an unpaired high surrogate" }
+    fun accept(data: ByteArray, offset: Int, length: Int) {
+        if (length == 0) return
+        observe(length)
+        html?.write(data, offset, length)
     }
 
     fun resolveContent(byteOffset: Int) {
@@ -125,5 +83,39 @@ internal class StreamingCounter(
         }
     }
 
+    fun html(): String = checkNotNull(html).toString(Charsets.UTF_8)
+}
+
+/** Renderer mode preserves character-write boundaries without allocating an encoded byte buffer. */
+internal class CountingRendererWriter(private val counter: StreamingCounter, collectHtml: Boolean) : Writer() {
+    private val html = if (collectHtml) StringBuilder() else null
+    private var pendingHighSurrogate = false
+
+    private inline fun accept(length: Int, charAt: (Int) -> Char) {
+        if (length == 0) return
+        val elapsed = counter.elapsed()
+        var size = 0
+        repeat(length) {
+            val char = charAt(it)
+            html?.append(char)
+            if (pendingHighSurrogate) {
+                check(char.isLowSurrogate()) { "Unpaired high surrogate" }
+                pendingHighSurrogate = false
+                size += 4
+            } else when {
+                char.isHighSurrogate() -> pendingHighSurrogate = true
+                char.isLowSurrogate() -> error("Unpaired low surrogate")
+                char.code < 0x80 -> size++
+                char.code < 0x800 -> size += 2
+                else -> size += 3
+            }
+        }
+        counter.observe(size, elapsed)
+    }
+
+    override fun write(chars: CharArray, offset: Int, length: Int) = accept(length) { chars[offset + it] }
+    override fun write(str: String, offset: Int, length: Int) = accept(length) { str[offset + it] }
+    override fun flush() = Unit
+    override fun close() { check(!pendingHighSurrogate) { "Unpaired high surrogate" } }
     fun html(): String = checkNotNull(html).toString()
 }

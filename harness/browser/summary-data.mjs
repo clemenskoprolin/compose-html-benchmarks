@@ -1,4 +1,5 @@
 // Adapt each runner's raw schema to the same summary records and units.
+import { jvmSsrTargets } from "../../tools/benchmark-targets.mjs";
 import { summarize } from "./metrics.mjs";
 
 export const ssrMetrics = [
@@ -15,9 +16,8 @@ export function ssrSummaryRecords(results, target) {
 }
 
 export function jvmSummaryRecords(data) {
-  return [["Compose JVM", data.rawProcesses], ["Thymeleaf", data.thymeleafProcesses],
-    ["JStachio", data.jstachioProcesses], ["jte", data.jteProcesses]].flatMap(([target, results]) =>
-    Object.entries(results ?? {}).filter(([, processes]) => processes.length).map(([scenario, processes]) => {
+  return jvmSsrTargets.flatMap(({ label: target, resultKey }) =>
+    Object.entries(data[resultKey] ?? {}).filter(([, processes]) => processes.length).map(([scenario, processes]) => {
       const samples = processes.flatMap(process => process.subsequent);
       const median = (values, divisor) => {
         const value = summarize(values).median;
@@ -32,6 +32,7 @@ export function jvmSummaryRecords(data) {
 }
 
 export const streamingMetrics = [
+  { key: "firstChunk", label: "First chunk", unit: "ms" },
   { key: "firstContent", label: "First content", unit: "ms" },
   { key: "first8KiB", label: "First 8 KiB", unit: "ms" },
   { key: "completion", label: "Complete", unit: "ms" },
@@ -42,7 +43,7 @@ export const streamingMetrics = [
 export function streamingSummaryRecords(results, labels) {
   return Object.entries(results).flatMap(([scenario, targets]) => Object.entries(targets)
     .filter(([, result]) => !result.skipped).map(([target, result]) => ({ scenario, target: labels[target], values: {
-      ...Object.fromEntries(["firstContent", "first8KiB", "completion"].map(key => [key, result[key + "Ms"].median])),
+      ...Object.fromEntries(["firstChunk", "firstContent", "first8KiB", "completion"].map(key => [key, result[key + "Ms"].median])),
       chunks: result.chunks.median,
       allocation: result.allocatedBytes.median == null ? null : result.allocatedBytes.median / 1024,
     } })));
