@@ -1,8 +1,8 @@
 # Compose HTML benchmark suite
 
 Reproducible benchmarks for Compose HTML (JVM SSR, browser JS and Wasm), React 19,
-and JVM SSR references using Thymeleaf, JStachio and jte. The suite uses fixtures across nine
-workloads covering markup-heavy pages, hydration and DOM updates.
+and JVM SSR references using Thymeleaf, JStachio and jte. The suite uses shared fixtures for
+markup-heavy pages, hydration and DOM updates.
 
 ## Quick start
 
@@ -54,15 +54,21 @@ BENCHMARK_MEMORY=false ./tools/run-benchmarks.sh \
 
 ```bash
 # Preview prepared output.
-./preview react tailwind-catalog
-./preview compose-wasm data-table
-./preview thymeleaf form-app
-./preview jstachio data-table
-./preview jte content-article
+./tools/preview react tailwind-catalog
+./tools/preview compose-wasm data-table
+./tools/preview thymeleaf form-app
+./tools/preview jstachio data-table
+./tools/preview jte content-article
 
 # Select a subset. See --help for every option.
 ./tools/run-benchmarks.sh --scenarios=data-table --targets=react,compose-wasm
 ./tools/run-benchmarks.sh --help
+
+# Run only Compose JVM SSR, skipping React and the JVM template engines.
+./tools/run-benchmarks.sh --ssr --targets=compose
+
+# Run only Compose JVM streaming SSR.
+./tools/run-benchmarks.sh --streaming --targets=compose
 
 # Tests and individual harnesses.
 npm test
@@ -80,15 +86,19 @@ machine-specific defaults. CLI options and environment variables can override it
 
 ## What is measured
 
-The default run compares Compose with React in SSR and browser benchmarks.
-Use `--ssr` or `--streaming` to include all JVM template engines:
+The default (`--standard`) runs string SSR for Compose JVM and React, plus browser
+benchmarks for React, Compose JS and Compose Wasm.
+Use `--ssr` or `--streaming` to include all JVM template engines.
+
+`--targets` restricts the selected suite further.
 
 | Suite | Targets | Measures |
 | --- | --- | --- |
 | Browser | React, Compose JS, Compose Wasm | Fresh-context startup, FCP, app readiness, interaction, transfer size and memory |
-| SSR (default) | React and Compose JVM; Kotlin/Wasm on Node via `--wasm` | Renderer initialization/first render and repeated string rendering; allocation where supported |
+| SSR (in `--standard`) | React and Compose JVM | Renderer initialization/first render and repeated string rendering; allocation where supported |
 | SSR (`--ssr`) | React, Compose JVM, Thymeleaf, JStachio and jte | Same string rendering and allocation measurements |
-| Streaming SSR (`--streaming`) | React, Compose JVM, Thymeleaf, JStachio and jte | First useful content, first 8 KiB, completion, chunk count and JVM allocation |
+| Wasm SSR (`--wasm`) | Compose Wasm on Node | First render and repeated string rendering |
+| Streaming SSR (`--streaming`) | React, Compose JVM, Thymeleaf, JStachio and jte | First 8 KiB, completion, output bytes and JVM allocation; `--stream-delivery=renderer` adds first chunk, content and chunk count. |
 
 ## Results
 
@@ -108,12 +118,16 @@ recent completed report of each kind. Metadata is included per run.
 | `update10th1k` | Browser | Updating every tenth row in a 1,000-row table |
 | `reorder1k` | Browser | Moving keyed rows within a 1,000-row table |
 | `filter-list` | Browser | Removing a large contiguous range from a 1,000-item list |
-| `preact-text` | SSR | Rendering 1,000 repeated text-heavy components |
+| `preact-text` | SSR | Rendering 1,000 repeated components with constant prose |
+| `dynamic-text` | SSR | Same 1,000-block layout with distinct prose supplied by the fixture |
+| `dynamic-text-escaped` | SSR | Runtime prose containing HTML-sensitive characters and Unicode |
 | `preact-search-results` | SSR | Rendering product results and a link-heavy footer |
 | `preact-stack` | SSR | Rendering ten component branches nested 1,000 levels deep |
+| `fractional-style` | Compose only | 256 elements with fractional units, opacity and custom properties; alternating elements reset priority and remove a property |
 
-The Thymeleaf `preact-stack` variant is globally reported as `SKIPPED` because its
-renderer does not finish in a reasonable time.
+`fractional-style` measures Compose's style builder. It has no React result or Compose-vs-React comparison.
+
+Some engines might skip some work loads, if they are not suitable.
 
 ## Repository layout
 
@@ -124,6 +138,11 @@ harness/           Browser and JVM runners plus correctness checks
 tools/             Build, selection and benchmark orchestration
 results/           Run archives and result documentation
 ```
+
+Buffered JVM streaming sends small writes through a shared 8,192-character buffer before
+UTF-8 encoding and the configurable byte delivery buffer. Template presentation views are
+built once per render, inside timing; Thymeleaf binds the fixture directly to its context.
+Literal template markup stays compact so formatting does not add output whitespace.
 
 The harness runners collect measurements and generate reports afterward.
 They use the following shared components:

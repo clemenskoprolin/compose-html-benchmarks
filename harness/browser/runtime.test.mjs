@@ -46,7 +46,7 @@ test("loadBenchmarkEnv loads environment file without overwriting existing varia
   }
 });
 
-test("SSR defaults, zero warmups and historical scenario fallback remain stable", () => {
+test("SSR defaults, zero warmups and scenario selection remain stable", () => {
   const keys = ["BENCHMARK_ITERATIONS", "BENCHMARK_TRIALS", "BENCHMARK_WARMUPS", "BENCHMARK_REPETITIONS", "BENCHMARK_SCENARIOS"];
   const saved = keys.map(key => process.env[key]);
   try {
@@ -59,7 +59,9 @@ test("SSR defaults, zero warmups and historical scenario fallback remain stable"
     process.env.BENCHMARK_SCENARIOS = " preact-text, unknown, data-table, preact-text ";
     assert.deepEqual(selectStringSsrScenarios(ssrScenarios), ["data-table", "preact-text"]);
     process.env.BENCHMARK_SCENARIOS = "unknown";
-    assert.deepEqual(selectStringSsrScenarios(ssrScenarios), ssrScenarios);
+    assert.deepEqual(selectStringSsrScenarios(ssrScenarios), []);
+    process.env.BENCHMARK_SCENARIOS = "fractional-style";
+    assert.deepEqual(selectStringSsrScenarios(ssrScenarios), []);
     process.env.BENCHMARK_SCENARIOS = " , ";
     assert.deepEqual(selectStringSsrScenarios(ssrScenarios), ssrScenarios);
   } finally {
@@ -81,4 +83,28 @@ test("shared shell setup preserves exported caller values after loading defaults
   } finally {
     rmSync(directory, { recursive: true, force: true });
   }
+});
+
+test("shared target defaults intersect the suite while CLI selections stay strict", async () => {
+  const { selectBenchmarkTargets } = await import("../../tools/benchmark-targets.mjs");
+  assert.deepEqual(selectBenchmarkTargets("standard", "").jvm, ["compose"]);
+  const shared = "react,compose-wasm,compose-js";
+  for (const suite of ["ssr", "streaming"]) {
+    assert.deepEqual(selectBenchmarkTargets(suite, shared).jvm, []);
+    assert.equal(selectBenchmarkTargets(suite, shared).react, true);
+    assert.throws(() => selectBenchmarkTargets(suite, shared, { strict: true }), /not supported/);
+  }
+  assert.deepEqual(selectBenchmarkTargets("wasm", shared).browser, ["compose-wasm"]);
+  assert.throws(() => selectBenchmarkTargets("jvm", shared), /No selected targets/);
+  assert.deepEqual(selectBenchmarkTargets("jvm", "compose").jvm, ["compose"]);
+  assert.throws(() => selectBenchmarkTargets("jvm", "compose-jvm", { strict: true }), /not supported/);
+});
+
+test("shell accepts shared environment targets and rejects unsupported CLI targets", () => {
+  const script = fileURLToPath(new URL("../../tools/run-benchmarks.sh", import.meta.url));
+  const env = { ...process.env, BENCHMARK_TARGETS: "react,compose-wasm,compose-js" };
+  const options = { env, encoding: "utf8", stdio: "pipe" };
+  // Both errors occur before builds or measurements; the first proves target selection succeeded.
+  assert.throws(() => execFileSync("bash", [script, "--ssr", "--scenarios=raw-text-style"], options), /JVM-only/);
+  assert.throws(() => execFileSync("bash", [script, "--ssr", "--targets=compose-js"], options), /not supported by --ssr/);
 });

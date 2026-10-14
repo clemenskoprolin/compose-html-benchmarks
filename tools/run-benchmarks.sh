@@ -6,6 +6,7 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 CHECKOUT=""
 REVISION=""
 ACTION="standard"
+TARGET_SELECTION_MODE=""
 # shellcheck source=common.sh
 source "$SCRIPT_DIR/common.sh"
 
@@ -31,11 +32,19 @@ Actions (default: --standard):
   --hydration, --browser    Run Playwright browser hydration benchmarks (Compose Wasm/JS vs React 19)
 
 Shared configuration:
+  --targets=LIST            Run only the selected targets (comma-separated; defaults depend on suite).
+                            SSR/streaming: compose, react, thymeleaf, jstachio, jte
+                            Browser: react, compose-wasm, compose-js
+                            --ssr --targets=compose runs Compose only; skips React and templates.
+                            --standard filters both SSR and browser runs to the selected targets.
   --scenarios=LIST          Comma-separated scenarios to run (default: all)
                             Available: tailwind-catalog, form-app, data-table, svg-dashboard,
                                        content-article, hydrate1k, update10th1k, reorder1k,
-                                       filter-list; raw-text-style, raw-text-elements, and
-                                       style-heavy-catalog are JVM/Wasm Node only (--jvm or --wasm)
+                                       filter-list
+                            SSR only: preact-text, dynamic-text, dynamic-text-escaped,
+                                      preact-search-results, preact-stack
+                            Compose JVM/Wasm Node only: fractional-style, raw-text-style, raw-text-elements,
+                                                style-heavy-catalog (--jvm or --wasm)
   --repetitions=N           Fresh process repetitions for both SSR and browser runs
                             (defaults: 3 for SSR, 2 for browser; this option overrides both)
   --warmups=N               Discarded renders/loads before sampling in each process
@@ -47,9 +56,6 @@ Shared configuration:
                             Strict enables COMPOSE_HTML_VALIDATE_STRICTLY; browser rendering stays fast.
 
 Browser hydration/startup:
-  --targets=LIST            Comma-separated targets (browser: react,compose-wasm,compose-js)
-                            Browser: react, compose-wasm, compose-js
-                            JVM SSR: compose-jvm, thymeleaf, jstachio, jte (default: all)
   --runs=N                  Measured page loads per browser process after warmup (default: 3)
 
 Server-side rendering (SSR):
@@ -59,6 +65,8 @@ Server-side rendering (SSR):
                             Compose JVM renderer: keyed, unkeyed, direct, single-pass or streaming.
                             Wasm Node supports keyed and unkeyed. Default: keyed when supported.
   --stream-chunk-size=N     Compose streaming target size in UTF-16 units (default: 2048)
+  --stream-delivery=MODE    buffered-utf8 (default): shared byte buffer; renderer: observe renderer writes
+  --stream-buffer-size=N    Shared UTF-8 delivery buffer in bytes (default: 8192)
 
 Help:
   -h, --help                Display this help message and exit
@@ -73,6 +81,9 @@ Examples:
 
   # Run only SSR reports:
   ./tools/run-benchmarks.sh --ssr
+
+  # Run only Compose JVM SSR (no React or template engines):
+  ./tools/run-benchmarks.sh --ssr --targets=compose
 
   # Run the optional Kotlin/Wasm Node SSR report:
   ./tools/run-benchmarks.sh --wasm
@@ -98,11 +109,13 @@ while [[ $# -gt 0 ]]; do
     --trials=*) export BENCHMARK_TRIALS="${1#*=}" ;;
     --iterations=*) export BENCHMARK_ITERATIONS="${1#*=}" ;;
     --scenarios=*|--scenario=*) export BENCHMARK_SCENARIOS="${1#*=}" ;;
-    --targets=*|--target=*) export BENCHMARK_TARGETS="${1#*=}" ;;
+    --targets=*|--target=*) export BENCHMARK_TARGETS="${1#*=}"; TARGET_SELECTION_MODE="--strict" ;;
     --react-mode=*) export BENCHMARK_REACT_MODE="${1#*=}" ;;
     --compose-validation=*) export BENCHMARK_COMPOSE_VALIDATION="${1#*=}" ;;
     --compose-string-rendering=*) export BENCHMARK_COMPOSE_STRING_RENDERING="${1#*=}" ;;
     --stream-chunk-size=*) export BENCHMARK_STREAM_CHUNK_SIZE="${1#*=}" ;;
+    --stream-delivery=*) export BENCHMARK_STREAM_DELIVERY="${1#*=}" ;;
+    --stream-buffer-size=*) export BENCHMARK_STREAM_BUFFER_SIZE="${1#*=}" ;;
     *)
       echo "Unknown option: $1" >&2
       echo "" >&2
@@ -112,6 +125,10 @@ while [[ $# -gt 0 ]]; do
   esac
   shift
 done
+
+target_selection="$(node "$SCRIPT_DIR/benchmark-targets.mjs" "$ACTION" "$TARGET_SELECTION_MODE")"
+IFS='|' read -r JVM_TARGETS RUN_REACT BROWSER_TARGETS SELECTED_TARGETS <<< "$target_selection"
+export BENCHMARK_TARGETS="$SELECTED_TARGETS"
 
 validate_react_mode --react-mode
 
@@ -172,12 +189,12 @@ if [[ -z "$CHECKOUT" ]]; then CHECKOUT="$REPO_ROOT/../compose-html-ssr"; fi
 DEPENDENCIES="${COMPOSE_DEPENDENCIES_PATH:-}"
 if [[ -z "$DEPENDENCIES" ]]; then DEPENDENCIES="$(read_local_property compose.dependencies.path)"; fi
 
-for setting in BENCHMARK_REPETITIONS BENCHMARK_RUNS BENCHMARK_WARMUPS BENCHMARK_TRIALS BENCHMARK_ITERATIONS BENCHMARK_STREAM_CHUNK_SIZE; do
+for setting in BENCHMARK_REPETITIONS BENCHMARK_RUNS BENCHMARK_WARMUPS BENCHMARK_TRIALS BENCHMARK_ITERATIONS BENCHMARK_STREAM_CHUNK_SIZE BENCHMARK_STREAM_BUFFER_SIZE; do
   value="${!setting:-}"
   pattern='^[1-9][0-9]*$'
   if [[ "$setting" == BENCHMARK_WARMUPS ]]; then pattern='^[0-9]+$'; fi
   if [[ -n "$value" && ! "$value" =~ $pattern ]]; then
-    echo "--runs, --repetitions, --trials, --iterations, and --stream-chunk-size must be at least 1; --warmups must be 0 or greater." >&2
+    echo "--runs, --repetitions, --trials, --iterations, --stream-chunk-size, and --stream-buffer-size must be at least 1; --warmups must be 0 or greater." >&2
     exit 1
   fi
 done
@@ -214,14 +231,26 @@ elif [[ "$ACTION" == "streaming" ]]; then
 elif [[ "$ACTION" == "wasm" ]]; then
   node "$REPO_ROOT/harness/browser/wasm-ssr-comparison.mjs"
 elif [[ "$ACTION" == "ssr" ]]; then
-  node "$SCRIPT_DIR/run-report.mjs" jvm "${GRADLE_COMPOSE_ARGS[@]}" -q
-  node "$REPO_ROOT/harness/browser/ssr-comparison.mjs"
+  if [[ -n "$JVM_TARGETS" ]]; then
+    node "$SCRIPT_DIR/run-report.mjs" jvm "${GRADLE_COMPOSE_ARGS[@]}" -q
+  fi
+  if [[ "$RUN_REACT" == "true" ]]; then
+    node "$REPO_ROOT/harness/browser/ssr-comparison.mjs"
+  fi
 elif [[ "$ACTION" == "hydration" ]]; then
-  node "$REPO_ROOT/harness/browser/hydration-benchmark.mjs"
+  BENCHMARK_TARGETS="$BROWSER_TARGETS" node "$REPO_ROOT/harness/browser/hydration-benchmark.mjs"
 elif [[ "$ACTION" == "standard" ]]; then
-  BENCHMARK_TARGETS=compose-jvm node "$SCRIPT_DIR/run-report.mjs" jvm "${GRADLE_COMPOSE_ARGS[@]}" -q
-  node "$REPO_ROOT/harness/browser/ssr-comparison.mjs" --defer-table
-  node "$REPO_ROOT/harness/browser/hydration-benchmark.mjs"
-  node "$REPO_ROOT/harness/browser/ssr-comparison.mjs" --print-table
+  if [[ -n "$JVM_TARGETS" ]]; then
+    node "$SCRIPT_DIR/run-report.mjs" jvm "${GRADLE_COMPOSE_ARGS[@]}" -q
+  fi
+  if [[ "$RUN_REACT" == "true" ]]; then
+    node "$REPO_ROOT/harness/browser/ssr-comparison.mjs" --defer-table
+  fi
+  if [[ -n "$BROWSER_TARGETS" ]]; then
+    BENCHMARK_TARGETS="$BROWSER_TARGETS" node "$REPO_ROOT/harness/browser/hydration-benchmark.mjs"
+  fi
+  if [[ "$RUN_REACT" == "true" && -n "$JVM_TARGETS" ]]; then
+    node "$REPO_ROOT/harness/browser/ssr-comparison.mjs" --print-table
+  fi
 fi
 printf '%s\n' "Benchmark suite complete. Each run is archived in results/runs; latest/ contains the latest reports."

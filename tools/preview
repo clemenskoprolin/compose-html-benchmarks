@@ -5,11 +5,12 @@ SCRIPT_PATH="${BASH_SOURCE[0]}"
 SCRIPT_DIR="${SCRIPT_PATH%/*}"
 [[ "$SCRIPT_DIR" == "$SCRIPT_PATH" ]] && SCRIPT_DIR="."
 SCRIPT_DIR="$(cd "$SCRIPT_DIR" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 PORT="${BENCHMARK_PORT:-4173}"
 
 usage() {
   printf '%s\n' \
-    'Usage: ./preview [thymeleaf|jstachio|jte|react|compose-js|compose-wasm] [site]' \
+    'Usage: ./tools/preview [thymeleaf|jstachio|jte|react|compose-js|compose-wasm] [site]' \
     '' \
     'Preview a prepared site in the default browser.' \
     '' \
@@ -80,7 +81,7 @@ cleanup() {
 trap cleanup EXIT INT TERM
 
 if ! server_ready; then
-  BENCHMARK_PORT="$PORT" node "$SCRIPT_DIR/harness/browser/server.mjs" &
+  BENCHMARK_PORT="$PORT" node "$REPO_ROOT/harness/browser/server.mjs" &
   server_pid=$!
   for _ in {1..50}; do
     if server_ready; then

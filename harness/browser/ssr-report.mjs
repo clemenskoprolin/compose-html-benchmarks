@@ -6,6 +6,7 @@ import { rootDirectory, reactRuntimeMode } from "./runtime.mjs";
 import { consoleTable } from "./report-table.mjs";
 import { scenarioSummary } from "./benchmark-summary.mjs";
 import { jvmSummaryRecords, ssrMetrics, ssrSummaryRecords } from "./summary-data.mjs";
+import { selectBenchmarkTargets, templateTargets } from "../../tools/benchmark-targets.mjs";
 
 const comparisonColumns = [
   { label: "Scenario", width: 25 }, { label: "Target", width: 16 },
@@ -21,11 +22,12 @@ const reactColumns = [
 ];
 
 export async function printComparisonTable(results = null, customScenarios = null) {
+  if (!selectBenchmarkTargets("ssr").jvm.length) return;
   const reactLabel = reactRuntimeMode() === "development" ? "React 19 (dev)" : "React 19";
   try {
     const jvmResultsPath = resolve(rootDirectory, "results/runs/latest/jvm-results.json");
     const jvmData = JSON.parse(await readFile(jvmResultsPath, "utf8"));
-    const templateLabels = ["Thymeleaf", "JStachio", "jte"];
+    const templateLabels = templateTargets.map(target => target.label);
     if (!results) {
       const ssrResultsPath = resolve(rootDirectory, "results/runs/latest/ssr-results.json");
       results = JSON.parse(await readFile(ssrResultsPath, "utf8"));
@@ -34,7 +36,7 @@ export async function printComparisonTable(results = null, customScenarios = nul
     const jvmRecords = jvmSummaryRecords(jvmData);
     const commonScenarios = targetScenarios.filter(s => jvmRecords.some(record => record.scenario === s));
     if (commonScenarios.length > 0) {
-      const templateTargets = templateLabels.filter(target => jvmRecords.some(record => record.target === target));
+      const presentTemplateLabels = templateLabels.filter(target => jvmRecords.some(record => record.target === target));
       const jvmRow = (scenario, target) => {
         const values = jvmRecords.find(record => record.scenario === scenario && record.target === target)?.values;
         return values && [scenario, target, `${values.first.toFixed(3)} ms`, `${values.warm.toFixed(3)} ms`,
@@ -46,7 +48,7 @@ export async function printComparisonTable(results = null, customScenarios = nul
         if (react) rows.push([scenario, reactLabel, `${react.initializationAndFirst.median.toFixed(3)} ms`,
           `${react.postWarmup.median.toFixed(3)} ms`, react.allocatedHeap?.median == null ? "—"
             : `${(react.allocatedHeap.median / 1024 / 1024).toFixed(2)} MiB*`]);
-        for (const target of templateTargets) {
+        for (const target of presentTemplateLabels) {
           const row = jvmRow(scenario, target);
           if (row) rows.push(row);
         }
@@ -95,7 +97,6 @@ export async function appendJvmSummary(directory) {
   const comparison = scenarioSummary(records, ssrMetrics);
   const markdownPath = resolve(directory, "jvm-results.md");
   await writeFile(markdownPath, (await readFile(markdownPath, "utf8")) + comparison.markdown);
-  await writeFile(resolve(directory, "jvm-summary.md"), `# JVM SSR overall comparison\n${comparison.markdown}`);
   console.log(comparison.console);
 }
 
