@@ -23,9 +23,21 @@
     "description": "First complete text pair",
     "elements": [{ "tag": "span", "classes": ["foo"] }, { "tag": "span", "classes": ["bar"] }]
   },
+  "dynamic-text": {
+    "description": "First complete text pair",
+    "elements": [{ "tag": "span", "classes": ["foo"] }, { "tag": "span", "classes": ["bar"] }]
+  },
+  "dynamic-text-escaped": {
+    "description": "First complete text pair",
+    "elements": [{ "tag": "span", "classes": ["foo"] }, { "tag": "span", "classes": ["bar"] }]
+  },
   "preact-search-results": {
     "description": "First complete search result",
     "elements": [{ "tag": "div", "classes": ["search-results-item"] }]
+  },
+  "fractional-style": {
+    "description": "First complete styled element",
+    "elements": [{ "tag": "div", "attributes": { "data-testid": "fractional-style" } }]
   },
   "preact-stack": {
     "description": "First complete leaf text",

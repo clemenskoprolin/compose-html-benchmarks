@@ -70,6 +70,8 @@ const ssrScenarioComponents = {
   "svg-dashboard": ["SvgDashboard", "../shared/SvgDashboard.jsx", "renderDocumentComponent", ""],
   "content-article": ["ContentArticle", "../shared/ContentArticle.jsx", "renderDocumentComponent", ", false, true"],
   "preact-text": ["PreactText", "../ssr/PreactText.jsx", "renderBodyComponent", ""],
+  "dynamic-text": ["DynamicText", "../ssr/DynamicText.jsx", "renderBodyComponent", ""],
+  "dynamic-text-escaped": ["DynamicText", "../ssr/DynamicText.jsx", "renderBodyComponent", ""],
   "preact-search-results": ["PreactSearchResults", "../ssr/PreactSearchResults.jsx", "renderBodyComponent", ""],
   "preact-stack": ["PreactStack", "../ssr/PreactStack.jsx", "renderBodyComponent", ""],
 };

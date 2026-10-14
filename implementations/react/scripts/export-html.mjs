@@ -1,8 +1,9 @@
-import { readFile, mkdir, writeFile } from "node:fs/promises";
+import { loadFixtures } from "../../../harness/browser/fixtures.mjs";
+import { mkdir, writeFile } from "node:fs/promises";
 import { renderBodyScenario, renderScenario } from "../../../build/web/react/dist/server-render.mjs";
 
 const root = new URL("../../../", import.meta.url);
-const fixtures = JSON.parse(await readFile(new URL("workloads/jvm/src/main/resources/fixtures.json", root)));
+const fixtures = await loadFixtures();
 const output = new URL("build/react-html/", root);
 await mkdir(output, { recursive: true });
 for (const [scenario, data] of Object.entries(fixtures)) {

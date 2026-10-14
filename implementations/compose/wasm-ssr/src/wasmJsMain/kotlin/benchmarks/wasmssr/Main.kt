@@ -44,12 +44,18 @@ private fun scenarioRenderer(name: String, fixtures: JsonObject): () -> String =
         render
     }
     "preact-text" -> ::renderPreactText
+    "dynamic-text", "dynamic-text-escaped" -> {
+        val data = textDataFromJson(fixtures.getValue(name))
+        val render: () -> String = { renderDynamicText(data) }
+        render
+    }
     "preact-search-results" -> {
         val data = preactSearchResultsDataFromJson(fixtures.getValue(name))
         val render: () -> String = { renderPreactSearchResults(data) }
         render
     }
     "preact-stack" -> ::renderPreactStack
+    "fractional-style" -> ::renderFractionalStyle
     "raw-text-style" -> ::renderRawTextStyle
     "raw-text-elements" -> ::renderRawTextElements
     "style-heavy-catalog" -> {

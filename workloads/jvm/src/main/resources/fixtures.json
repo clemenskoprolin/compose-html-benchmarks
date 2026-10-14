@@ -13131,5 +13131,13 @@
       } ],
       "headingHref" : null
     } ]
+  },
+  "dynamic-text" : {
+    "count" : 1000,
+    "escaped" : false
+  },
+  "dynamic-text-escaped" : {
+    "count" : 1000,
+    "escaped" : true
   }
 }

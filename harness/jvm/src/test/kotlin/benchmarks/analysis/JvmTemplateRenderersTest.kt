@@ -1,7 +1,5 @@
 package benchmarks.analysis
 
-import benchmarks.jstachio.JStachioRenderer
-import benchmarks.jte.JteRenderer
 import benchmarks.model.*
 import org.jsoup.Jsoup
 import java.io.StringWriter
@@ -15,15 +13,12 @@ class JvmTemplateRenderersTest {
         for (name in templateWorkloads) {
             val fixture = workloadFixture(name)
             for (target in targets) {
+                if (skipReason(target, name) != null) continue
                 val render = jvmSsrWorkload(target, name, fixture)
                 val first = render()
                 assertEquals(first, render(), "$target $name subsequent output")
                 val writer = StringWriter()
-                when (target) {
-                    JvmSsrTarget.JSTACHIO -> JStachioRenderer.stream(name, fixture, writer)
-                    JvmSsrTarget.JTE -> JteRenderer.stream(name, fixture, writer)
-                    else -> error("Unexpected target")
-                }
+                streamJvmSsrWorkload(target, name, fixture, writer)
                 assertEquals(first, writer.toString(), "$target $name streaming output")
                 assertTrue(first.isNotEmpty())
             }
@@ -96,7 +91,11 @@ class JvmTemplateRenderersTest {
 
     @Test
     fun deepStackHasTenCompleteBranches() {
-        for (target in targets) {
+        assertNotNull(skipReason(JvmSsrTarget.JSTACHIO, "preact-stack"))
+        assertFailsWith<IllegalStateException> {
+            jvmSsrWorkload(JvmSsrTarget.JSTACHIO, "preact-stack", null)
+        }
+        for (target in targets.filter { skipReason(it, "preact-stack") == null }) {
             val html = jvmSsrWorkload(target, "preact-stack", null)()
             assertEquals(10011, Regex("<div>").findAll(html).count())
             assertEquals(10011, Regex("</div>").findAll(html).count())
@@ -105,13 +104,39 @@ class JvmTemplateRenderersTest {
     }
 
     @Test
+    fun dynamicTextUsesRuntimeValuesAndStreamsTheSameEscapedHtmlForEveryJvmRenderer() {
+        val fixture = TextData(listOf(
+            TextPair("<script>\"quoted\" & 'single' 😀 café α</script>", "second > first & é"),
+            TextPair("another row", "different text"),
+        ))
+        for (name in listOf("dynamic-text", "dynamic-text-escaped")) {
+            for (target in JvmSsrTarget.entries) {
+                val html = jvmSsrWorkload(target, name, fixture)()
+                val document = Jsoup.parse(html)
+                assertTrue(document.select("script").isEmpty(), "$target $name unsafe text")
+                assertEquals(fixture.items.map { it.foo }, document.select("span.foo").map { it.wholeText() })
+                assertEquals(fixture.items.map { it.bar }, document.select("span.bar").map { it.wholeText() })
+                val changed = fixture.copy(items = listOf(TextPair("changed", "updated")))
+                assertEquals("changed", Jsoup.parse(jvmSsrWorkload(target, name, changed)())
+                    .selectFirst("span.foo")!!.text())
+                val counter = StreamingCounter(0, collectHtml = true)
+                val sink = BufferedUtf8Sink(counter, 7) // Also split multibyte code points between byte deliveries.
+                streamJvmSsrWorkload(target, name, fixture, sink.writer, chunkSize = 16)
+                sink.finish()
+                assertEquals(html, counter.html(), "$target $name UTF-8 output")
+                assertEquals(html.toByteArray(Charsets.UTF_8).size, counter.bytes)
+            }
+        }
+    }
+
+    @Test
     fun targetSelectionAndUnsupportedScenariosAreExplicit() {
         assertEquals(targets, selectedJvmSsrTargets("jstachio, jte"))
-        assertEquals(listOf(JvmSsrTarget.COMPOSE_JVM), selectedJvmSsrTargets("compose-jvm"))
+        assertEquals(listOf(JvmSsrTarget.COMPOSE_JVM), selectedJvmSsrTargets("compose"))
         assertEquals(JvmSsrTarget.entries, selectedJvmSsrTargets(null))
         for (target in targets) {
-            assertFalse(supportsJvmSsrWorkload(target, "raw-text-style"))
-            assertFailsWith<IllegalArgumentException> { jvmSsrWorkload(target, "raw-text-style", null) }
+            assertNotNull(skipReason(target, "raw-text-style"))
+            assertFailsWith<IllegalStateException> { jvmSsrWorkload(target, "raw-text-style", null) }
         }
     }
 }

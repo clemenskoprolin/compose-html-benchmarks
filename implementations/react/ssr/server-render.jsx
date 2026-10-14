@@ -8,6 +8,7 @@ import { Update10th1k } from "../browser/Update10th1k.jsx";
 import { Reorder1k } from "../browser/Reorder1k.jsx";
 import { FilterList } from "../browser/FilterList.jsx";
 import { PreactText } from "./PreactText.jsx";
+import { DynamicText } from "./DynamicText.jsx";
 import { PreactSearchResults } from "./PreactSearchResults.jsx";
 import { PreactStack } from "./PreactStack.jsx";
 import { renderBodyComponent, renderDocumentComponent } from "./renderer.jsx";
@@ -23,6 +24,8 @@ const scenarioComponents = {
   "reorder1k": Reorder1k,
   "filter-list": FilterList,
   "preact-text": PreactText,
+  "dynamic-text": DynamicText,
+  "dynamic-text-escaped": DynamicText,
   "preact-search-results": PreactSearchResults,
   "preact-stack": PreactStack,
 };

@@ -1,5 +1,6 @@
 // Runs the React SSR benchmark in fresh Node workers and writes its comparison report.
 // Worker mode times React's server renderer; parent mode coordinates repetitions and summaries.
+import { loadFixtures } from "./fixtures.mjs";
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import { Session } from "node:inspector/promises";
@@ -59,7 +60,7 @@ const scenarios = selectStringSsrScenarios(allScenarios);
 
 async function worker(scenario) {
   assert(allScenarios.includes(scenario), `Unknown scenario: ${scenario}`);
-  const fixtures = JSON.parse(await readFile(resolve(rootDirectory, "workloads/jvm/src/main/resources/fixtures.json")));
+  const fixtures = await loadFixtures();
   const expected = await readFile(resolve(rootDirectory, `build/ssr-html/${scenario}.html`), "utf8");
   const initializationStart = performance.now();
   const { renderScenario } = await import(`../../build/web/react/dist/server-render-${scenario}.mjs`);
@@ -87,6 +88,8 @@ const printTableOnly = process.argv.includes("--print-table") || process.argv.in
 
 if (process.argv[2] === "--worker") {
   console.log(JSON.stringify(await worker(process.argv[3])));
+} else if (scenarios.length === 0) {
+  console.log("No React SSR scenarios selected.");
 } else if (printTableOnly) {
   await printComparisonTable(null, requestedScenarios?.length ? scenarios : null);
 } else {

@@ -25,8 +25,10 @@ private fun scenarioContent(name: String, data: Any?): @Composable () -> Unit = 
         "svg-dashboard" -> SvgDashboardDocument(data as SvgDashboardData)
         "content-article" -> ContentArticleDocument(data as ArticleData)
         "preact-text" -> PreactText()
+        "dynamic-text", "dynamic-text-escaped" -> DynamicText(data as TextData)
         "preact-search-results" -> PreactSearchResults(data as PreactSearchResultsData)
         "preact-stack" -> PreactStack()
+        "fractional-style" -> FractionalStyle()
         "stream-pre", "stream-textarea" -> TagElement<Element>(
             if (name == "stream-pre") "pre" else "textarea", null,
         ) {

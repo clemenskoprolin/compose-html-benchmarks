@@ -111,12 +111,12 @@ fun main(args: Array<String>) {
     }
 
     val targets = selectedJvmSsrTargets()
-    val activeWorkloadNames = selectedWorkloadNames.filter { name -> targets.any { supportsJvmSsrWorkload(it, name) } }
+    val activeWorkloadNames = selectedWorkloadNames
     val directory = File(System.getenv("BENCHMARK_RESULTS_DIRECTORY")
         ?: "results/runs/${Instant.now().toString().replace(':', '-')}-jvm-${ProcessHandle.current().pid()}")
     directory.mkdirs()
     val results = targets.associateWith { target ->
-        activeWorkloadNames.filter { supportsJvmSsrWorkload(target, it) && skippedJvmSsrWorkload(target, it) == null }
+        activeWorkloadNames.filter { skipReason(target, it) == null }
             .associateWith { mutableListOf<JvmSsrWorkerResult>() }
     }
     require(results.values.any { it.isNotEmpty() }) { "No supported JVM SSR scenarios selected" }
@@ -164,8 +164,7 @@ fun main(args: Array<String>) {
         val order = activeWorkloadNames.drop(offset) + activeWorkloadNames.take(offset)
         for (name in order) {
             for (target in targets.drop(repetition % targets.size) + targets.take(repetition % targets.size)) {
-                if (!supportsJvmSsrWorkload(target, name)) continue
-                val reason = skippedJvmSsrWorkload(target, name)
+                val reason = skipReason(target, name)
                 if (reason != null) println("  ${target.label} process ${repetition + 1}/$repetitions ($name)... SKIPPED ($reason)")
                 else runTarget(target, name, repetition)
             }
@@ -199,7 +198,7 @@ fun main(args: Array<String>) {
                 val cells = resultCells(processes)
                 markdown += "| $name | ${target.label} | ${cells.joinToString(" | ")} |"
                 printRow(name, target.label, cells)
-            } else if (skippedJvmSsrWorkload(target, name) != null) {
+            } else if (skipReason(target, name) != null) {
                 printRow(name, target.label, listOf("SKIPPED", "SKIPPED", "n/a"))
                 markdown += "| $name | ${target.label} | SKIPPED | SKIPPED | n/a |"
             }
@@ -213,11 +212,12 @@ fun main(args: Array<String>) {
             "os" to System.getProperty("os.name"), "osVersion" to System.getProperty("os.version"), "arch" to System.getProperty("os.arch")),
         "targetVersions" to targets.associate { it.argument to it.version },
         *targets.map { it.resultKey to results.getValue(it) }.toTypedArray(),
-        "skippedThymeleafWorkloads" to skippedThymeleafWorkloads,
     )))
     File(directory, "jvm-results.md").writeText("""# JVM SSR results
 
-Each workload runs in $repetitions fresh JVMs with a 16 MiB stack and Kotlin's monotonic `measureTime` clock. Compose HTML string rendering mode: ${composeHtmlStringRenderingMode()}; HTML validation: ${composeHtmlValidationMode()}. Renderer initialization + first render starts before the workload renderer is resolved and ends when its first HTML string is complete; it excludes process and fixture initialization. Each process performs $warmups warmups, then $samples trials of $iterations renders; subsequent timings and allocations are per-render trial means. JStachio 1.3.7 and jte 3.2.4 use build-time compiled templates. JStachio presentation views are constructed inside each render and included in timing and allocation; jte reads the shared fixtures directly. Raw timings and allocations are retained in JSON. Unavailable allocation counters are null.
+Each workload runs in $repetitions fresh JVMs with a 16 MiB stack and Kotlin's monotonic `measureTime` clock. Compose HTML string rendering mode: ${composeHtmlStringRenderingMode()}; HTML validation: ${composeHtmlValidationMode()}. Renderer initialization + first render starts before the workload renderer is resolved and ends when its first HTML string is complete; it excludes process and fixture initialization. Each process performs $warmups warmups, then $samples trials of $iterations renders; subsequent timings and allocations are per-render trial means. JStachio ${JvmSsrTarget.JSTACHIO.version} and jte ${JvmSsrTarget.JTE.version} use build-time compiled templates. JStachio presentation views are constructed inside each render and included in timing and allocation; jte reads the shared fixtures directly. Raw timings and allocations are retained in JSON. Unavailable allocation counters are null.
+
+`fractional-style` measures Compose's style builder, including priority reset and property removal. It has no React or template-engine result.
 
 | Scenario | Target | Renderer initialization + first render median | Subsequent median | Subsequent allocation median |
 | :--- | :--- | ---: | ---: | ---: |

@@ -56,7 +56,8 @@ fun main() {
     for (target in profileConfiguration.targets) {
         for (scenario in profileConfiguration.scenarios) {
             println("Profiling ${target.argument} / ${scenario.argument}...")
-            val render = prepareJvmSsrWorkload(target, scenario)
+            val name = scenario.argument
+            val render = jvmSsrWorkload(target, name, workloadFixture(name))
             val first = initialRender(render)
             val second = repeatedRender(render)
             val third = repeatedRender(render)

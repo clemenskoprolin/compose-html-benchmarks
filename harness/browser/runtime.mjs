@@ -49,8 +49,8 @@ export const documentScenarios = [
   "tailwind-catalog", "form-app", "data-table", "svg-dashboard", "content-article",
 ];
 export const browserScenarios = [...documentScenarios, "hydrate1k", "update10th1k", "reorder1k", "filter-list"];
-export const ssrScenarios = [...documentScenarios, "preact-text", "preact-search-results", "preact-stack"];
-export const jvmScenarios = [...ssrScenarios, "raw-text-style", "raw-text-elements", "style-heavy-catalog"];
+export const ssrScenarios = [...documentScenarios, "preact-text", "dynamic-text", "dynamic-text-escaped", "preact-search-results", "preact-stack"];
+export const jvmScenarios = [...ssrScenarios, "fractional-style", "raw-text-style", "raw-text-elements", "style-heavy-catalog"];
 
 export function benchmarkCount(name, fallback, minimum = 1) {
   return positiveInteger(process.env[name] ?? fallback, name, minimum);
@@ -65,11 +65,9 @@ export function ssrSettings({ warmups = process.env.BENCHMARK_WARMUPS ?? 3 } = {
   };
 }
 
-// String SSR historically falls back to all workloads if none of the requested names match.
 export function selectStringSsrScenarios(available) {
   const requested = process.env.BENCHMARK_SCENARIOS?.split(",").map(name => name.trim()).filter(Boolean);
-  const matched = available.filter(name => requested?.includes(name));
-  return matched.length ? matched : available;
+  return requested?.length ? available.filter(name => requested.includes(name)) : available;
 }
 
 // Repetition-major order is shared by string SSR runners. Streaming has its own order.

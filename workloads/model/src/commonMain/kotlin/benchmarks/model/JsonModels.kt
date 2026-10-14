@@ -340,3 +340,13 @@ fun preactFooterLinkFromJson(value: JsonElement): PreactFooterLink {
         href = obj.getValue("href").jsonPrimitive.content,
     )
 }
+
+fun textDataFromJson(value: JsonElement): TextData {
+    val obj = value.jsonObject
+    return textFixture(
+        escaped = obj.getValue("escaped").jsonPrimitive.boolean,
+        count = obj.getValue("count").jsonPrimitive.int,
+        foo = obj.getValue("foo").jsonPrimitive.content,
+        bar = obj.getValue("bar").jsonPrimitive.content,
+    )
+}

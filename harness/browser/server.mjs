@@ -1,5 +1,7 @@
 // Local HTTP server for previewing and browser-benchmarking the prepared web artifacts.
 // It serves framework bundles and the pre-exported SSR HTML.
+import { templateTargets } from "../../tools/benchmark-targets.mjs";
+import { loadFixtures } from "./fixtures.mjs";
 import { createReadStream } from "node:fs";
 import { readFile, readdir, stat } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -35,10 +37,9 @@ for (const scenario of [...composeClientScenarios, "hydrate1k-table-unchecked"])
 }
 
 // Fixture data loader
-const fixturesUrl = new URL("workloads/jvm/src/main/resources/fixtures.json", repositoryRoot);
 let fixtures = {};
 try {
-  fixtures = JSON.parse(await readFile(fixturesUrl, "utf8"));
+  fixtures = await loadFixtures();
 } catch {
   // Fallback
 }
@@ -158,9 +159,7 @@ async function sendStatic(request, response, sourceUrl, contentType) {
 
 const pageRoutes = [
   { prefix: "/react/", label: "React", renderer: "react", stack: true },
-  { prefix: "/jstachio/", label: "JStachio", renderer: "jstachio", exportHint: true },
-  { prefix: "/jte/", label: "jte", renderer: "jte", exportHint: true },
-  { prefix: "/thymeleaf/", label: "Thymeleaf", renderer: "thymeleaf", exportHint: true },
+  ...templateTargets.map(({ key, label }) => ({ prefix: `/${key}/`, label, renderer: key, exportHint: true })),
   { prefix: "/compose-wasm/", label: "Compose Wasm", target: "wasm", exportHint: true },
   { prefix: "/compose-js/", label: "Compose JS", target: "js", exportHint: true },
   { prefix: "/compose-wasm-table-unchecked/", label: "table-unchecked Compose Wasm", target: "wasm", unchecked: true },
@@ -229,7 +228,7 @@ export function createBenchmarkServer() {
       const scenario = pathname.replace(route.prefix, "");
       try {
         let html;
-        if (["thymeleaf", "jstachio", "jte"].includes(route.renderer)) {
+        if (templateTargets.some(target => target.key === route.renderer)) {
           html = await readFile(new URL(`build/ssr-html/${scenario}.${route.renderer}.html`, repositoryRoot), "utf8");
         } else {
           const file = route.renderer === "react"

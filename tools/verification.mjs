@@ -4,20 +4,23 @@ import { execFileSync } from "node:child_process";
 import { access, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
 import { gitState, hash, rootDirectory } from "../harness/browser/run-record.mjs";
-
+import { templateTargets } from "./benchmark-targets.mjs";
 import { browserScenarios, ssrScenarios, jvmScenarios } from "../harness/browser/runtime.mjs";
+
+const preparedSourcePaths = ["implementations", "workloads", "gradle.properties", "settings.gradle.kts", "harness/browser/fixtures.mjs",
+  "harness/jvm/src/main", "harness/jvm/build.gradle.kts"];
 
 const stampPath = resolve(rootDirectory, "build/verification.json");
 const scenarios = browserScenarios;
 const requiredArtifacts = [
   "build/compose-provenance.json",
+  "build/ssr-html/skipped.json",
   "implementations/compose/wasm-ssr/build/compileSync/wasmJs/main/productionExecutable/optimized/compose-html-benchmarks-implementations-compose-wasm-ssr.mjs",
   "implementations/compose/wasm-ssr/build/compileSync/wasmJs/main/productionExecutable/optimized/compose-html-benchmarks-implementations-compose-wasm-ssr.wasm",
   "build/web/react/dist/server-render.mjs",
   ...ssrScenarios.map(scenario =>
     `build/web/react/dist/server-stream-${scenario}.mjs`),
   "workloads/jvm/src/main/resources/fixtures.json",
-  ...ssrScenarios.flatMap(scenario => ["jstachio", "jte"].map(target => `build/ssr-html/${scenario}.${target}.html`)),
   ...[...new Set([...scenarios, ...jvmScenarios])].map(scenario => `build/ssr-html/${scenario}.html`),
   ...scenarios.flatMap(scenario => ["js", "wasm"].map(target =>
     `build/web/static/${scenario}/${target}/${scenario}-compose.js`)),
@@ -107,7 +110,7 @@ async function fingerprint() {
     reactMode: options["react-mode"] ?? "production",
     compose: await sourceFingerprint(checkout),
     dependencies: deps ? { path: deps, ...await sourceFingerprint(deps) } : null,
-    sources: await contentFingerprint(rootDirectory, ["--cached", "--others", "--exclude-standard", "--", "implementations", "workloads"]),
+    sources: await contentFingerprint(rootDirectory, ["--cached", "--others", "--exclude-standard", "--", ...preparedSourcePaths]),
     packageLockSha256: hash(await readFile(resolve(rootDirectory, "package-lock.json"))),
   };
 }
@@ -126,7 +129,7 @@ const describe = {
   "dependencies.diffSha256": "uncommitted changes in modified dependencies",
   "dependencies.untrackedSha256": "untracked files in modified dependencies",
   "dependencies.contentSha256": "modified dependencies content hash",
-  sources: "benchmark sources (implementations, workloads)",
+  sources: "benchmark sources and build configuration",
   packageLockSha256: "package-lock.json",
 };
 
@@ -137,7 +140,6 @@ function differences(recorded, current, prefix = "") {
     return recorded?.[key] === value ? [] : [describe[path] ?? path];
   });
 }
-
 
 if (mode === "dependencies") {
   const manifest = JSON.parse(await readFile(resolve(rootDirectory, "package.json")));
@@ -152,7 +154,7 @@ if (mode === "dependencies") {
   catch { console.log("No previous preparation stamp."); process.exit(1); }
   const changed = [];
   if (recorded.reactMode !== (options["react-mode"] ?? "production")) changed.push("React runtime mode");
-  const sources = await contentFingerprint(rootDirectory, ["--cached", "--others", "--exclude-standard", "--", "implementations", "workloads"]);
+  const sources = await contentFingerprint(rootDirectory, ["--cached", "--others", "--exclude-standard", "--", ...preparedSourcePaths]);
   if (recorded.sources !== sources) changed.push("benchmark sources");
   const packageLockSha256 = hash(await readFile(resolve(rootDirectory, "package-lock.json")));
   if (recorded.packageLockSha256 !== packageLockSha256) changed.push("package-lock.json");
@@ -184,13 +186,21 @@ if (mode === "dependencies") {
     await access(resolve(rootDirectory, artifact))
       .catch(() => fail(`Prepared artifact is missing: ${artifact}.`));
   }
+  const skipped = JSON.parse(await readFile(resolve(rootDirectory, "build/ssr-html/skipped.json"), "utf8"));
+  for (const scenario of ssrScenarios) {
+    for (const { key: target } of templateTargets) {
+      if (skipped[`${scenario}/${target}`]) continue;
+      const artifact = `build/ssr-html/${scenario}.${target}.html`;
+      await access(resolve(rootDirectory, artifact))
+        .catch(() => fail(`Prepared artifact is missing: ${artifact}.`));
+    }
+  }
   const compId = recorded.compose?.revision?.slice(0, 12) ?? recorded.compose?.contentSha256?.slice(0, 12) ?? "custom";
   const depInfo = recorded.dependencies ? ` + deps: ${recorded.dependencies.path}` : "";
   console.log(`Using artifacts prepared at ${preparedAt} (Compose ${compId}${depInfo}).`);
 } else {
   throw new Error(`Usage: verification.mjs reusable|write|check --checkout=PATH --revision=SHA [--dependencies=PATH]`);
 }
-
 
 function fail(message) {
   console.error(`${message}`);

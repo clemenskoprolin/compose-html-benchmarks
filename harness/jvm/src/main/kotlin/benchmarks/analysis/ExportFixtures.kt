@@ -10,6 +10,8 @@ import com.fasterxml.jackson.databind.ObjectMapper
 import com.fasterxml.jackson.module.kotlin.registerKotlinModule
 import java.io.File
 
+private fun textSpec(escaped: Boolean) = mapOf("count" to 1_000, "escaped" to escaped)
+
 fun main() {
     val mapper = ObjectMapper().registerKotlinModule()
     val allFixtures = mapOf(
@@ -22,7 +24,9 @@ fun main() {
         "update10th1k" to update10th1kFixture(),
         "reorder1k" to reorder1kFixture(),
         "filter-list" to filterListFixture(),
-        "preact-search-results" to preactSearchResultsFixture()
+        "preact-search-results" to preactSearchResultsFixture(),
+        "dynamic-text" to textSpec(escaped = false),
+        "dynamic-text-escaped" to textSpec(escaped = true)
     )
     val outFile = File("workloads/jvm/src/main/resources/fixtures.json")
     outFile.parentFile.mkdirs()

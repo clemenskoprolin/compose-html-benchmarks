@@ -20,10 +20,15 @@ fun main() {
     for (name in documentWorkloads) {
         File(outDir, "$name.body.html").writeText(composeWorkloadBody(name, workloadFixture(name)))
     }
+    val skips = JvmSsrTarget.entries.flatMap { target ->
+        workloadNames.mapNotNull { name ->
+            skipReason(target, name)?.let { "$name/${target.argument}" to it }
+        }
+    }.toMap()
+    File(outDir, "skipped.json").writeText(benchmarkJson.writeValueAsString(skips))
     for (target in JvmSsrTarget.entries.filter { it != JvmSsrTarget.COMPOSE_JVM }) {
         for (name in templateWorkloads) {
-            // Thymeleaf's recursive stack template does not complete in practical time.
-            if (skippedJvmSsrWorkload(target, name) != null) continue
+            if (skipReason(target, name) != null) continue
             File(outDir, "$name.${target.argument}.html").writeText(jvmSsrWorkload(target, name, workloadFixture(name))())
         }
     }

@@ -1,13 +1,15 @@
 // Checks that the prepared Compose, React, and JVM template engine SSR outputs describe the same DOM.
 // Preparation runs this before allowing benchmark measurements.
+import { templateTargets } from "../../tools/benchmark-targets.mjs";
+import { loadFixtures } from "./fixtures.mjs";
 import { readFile } from "node:fs/promises";
 import { ensureSsrRuntime, documentScenarios, ssrScenarios } from "./runtime.mjs";
 import { assertEquivalent } from "./html-equivalence.mjs";
 ensureSsrRuntime();
 const { renderScenario, renderBodyScenario } = await import("../../build/web/react/dist/server-render.mjs");
-const fixtures = JSON.parse(await readFile(new URL("../../workloads/jvm/src/main/resources/fixtures.json", import.meta.url)));
+const fixtures = await loadFixtures();
 const scenarios = [...ssrScenarios, "hydrate1k"];
-const templateTargets = ["thymeleaf", "jstachio", "jte"];
+const skipped = JSON.parse(await readFile(new URL("../../build/ssr-html/skipped.json", import.meta.url)));
 const bodyScenarios = new Set(documentScenarios);
 const isolatedBenchmarkScenarios = new Set(scenarios.filter((scenario) => scenario !== "hydrate1k"));
 for (const scenario of scenarios) {
@@ -23,8 +25,8 @@ for (const scenario of scenarios) {
     }
   }
   if (ssrScenarios.includes(scenario)) {
-    for (const target of templateTargets) {
-      if (target === "thymeleaf" && scenario === "preact-stack") continue;
+    for (const { key: target } of templateTargets) {
+      if (skipped[`${scenario}/${target}`]) continue;
       const html = await readFile(new URL(`../../build/ssr-html/${scenario}.${target}.html`, import.meta.url), "utf8");
       assertEquivalent(compose, html, `${scenario} ${target}`);
     }
